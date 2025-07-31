@@ -15,7 +15,7 @@ Arduino (USB) → Python WebSocket Server → ML Model → React Native App
 How the System Works (Conceptually)
 Your system is a real-time anomaly monitoring loop using embedded hardware and mobile + backend infrastructure.
 
-⚙️ Flow:
+Flow:
 Data Generation (Arduino):
 
 The Arduino reads analog voltage from a sensor (i.e. vibration).
