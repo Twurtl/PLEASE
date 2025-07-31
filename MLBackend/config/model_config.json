@@ -1,0 +1,25 @@
+{
+    "anomaly_threshold": 0.5,
+    "confidence_threshold": 0.7,
+    "window_size": 50,
+    "sample_rate": 10,
+    "feature_names": [
+        "voltage_mean",
+        "voltage_std",
+        "voltage_min",
+        "voltage_max",
+        "voltage_range",
+        "voltage_variance",
+        "voltage_skewness",
+        "voltage_kurtosis",
+        "time_delta_mean",
+        "time_delta_std",
+        "frequency_dominant",
+        "frequency_bandwidth"
+    ],
+    "model_type": "rule_based",
+    "arduino_baud_rate": 9600,
+    "websocket_port": 5000,
+    "max_voltage": 5.0,
+    "min_voltage": 0.0
+}

@@ -1,0 +1,339 @@
+current backend:
+MLBackend/
+├── app.py                    # Flask + WebSocket server
+├── websocket_handler.py      # WebSocket connection management
+├── ml_model.py              # LSTM model inference
+├── data_processor.py        # Signal processing
+├── models/
+│   └── lstm_anomaly.h5      # Your trained model
+├── config/
+│   └── model_config.json    # Model parameters
+└── requirements.txt
+
+Arduino (USB) → Python WebSocket Server → ML Model → React Native App
+
+How the System Works (Conceptually)
+Your system is a real-time anomaly monitoring loop using embedded hardware and mobile + backend infrastructure.
+
+⚙️ Flow:
+Data Generation (Arduino):
+
+The Arduino reads analog voltage from a sensor (i.e. vibration).
+
+It sends voltage data over serial to the HC-05 Bluetooth module, which transmits data to the app.
+
+Data Reception (React Native App):
+
+BluetoothService.ts handles the Bluetooth communication using react-native-bluetooth-serial-next.
+
+Each data point (e.g. "3.45\n") is parsed via DataParser.ts.
+
+The app sends the value to the backend via ApiService.ts.
+
+Backend ML Inference (Flask):
+
+The backend Flask API receives the voltage via HTTP POST (from the app).
+
+The LSTM model processes a rolling window of recent voltages.
+
+The backend returns a classification: normal or anomaly.
+
+Display Results (App):
+
+The response is shown on the app (e.g. green = normal, red = anomaly).
+
+The chart in LiveChart.tsx updates in real time.
+
+
+
+
+# System Connection Flow
+
+## 1. Hardware Connection
+```
+Arduino Uno/Nano
+├── A0 Pin ←── Voltage Source (0-5V)
+├── D2 Pin ←── HC-05 TX
+├── D3 Pin ←── HC-05 RX
+└── Power ←── 5V + GND
+```
+
+## 2. Data Flow
+```
+Arduino → HC-05 Bluetooth → iOS App → HTTP API → Python ML Backend
+   ↓           ↓              ↓         ↓            ↓
+Voltage    JSON/String    Parse &    REST API    TensorFlow
+Reading    via Serial    Display    /predict     Model
+```
+
+## 3. Real-time Processing
+```
+iOS App receives voltage data every 200ms:
+1. Display on real-time chart
+2. Update statistics
+3. Buffer data for ML processing
+4. Every 1 second: Send 50-point window to ML backend
+5. If anomaly detected: Show alert and mark on chart
+```
+
+## 4. Component Responsibilities
+
+### Arduino
+- Read voltage from A0 pin every 200ms
+- Smooth data with 10-point moving average
+- Send via HC-05 as JSON: `{"voltage":3.245,"timestamp":12345}`
+
+### iOS App
+- Connect to HC-05 via Bluetooth
+- Parse incoming voltage data
+- Display real-time chart
+- Buffer data and send to ML backend
+- Show anomaly alerts
+
+### ML Backend
+- Receive POST requests with voltage sequences
+- Process through trained LSTM autoencoder
+- Return anomaly probability
+- Maintain model in memory for fast inference
+
+## 5. Setup Sequence
+
+1. **Start ML Backend**: `python MLBackend/app.py`
+2. **Train Model**: `python MLBackend/train_model.py`
+3. **Upload Arduino Code**: Flash `voltage_monitor.ino`
+4. **Pair HC-05**: Pair with iOS device (PIN: 1234 or 0000)
+5. **Run iOS App**: `npx react-native run-ios`
+6. **Connect**: Use app to connect to HC-05 module
+7. **Monitor**: Watch real-time voltage and anomalies
+
+
+
+
+
+Full file tree Structure:
+# Complete Arduino Piezoelectric Anomaly Detection System
+├── AnomalyApp/                          # React Native mobile app
+│   ├── App.tsx
+│   ├── index.js
+│   ├── package.json
+│   └── src/
+│       ├── components/
+│       │   ├── ConnectPanel.tsx         # UI to choose connection (Bluetooth/WebSocket)
+│       │   ├── LiveChart.tsx            # Live vibration spectrum + anomaly chart
+│       │   ├── MaterialSelector.tsx     # NEW: Select material profile
+│       │   ├── CalibrationPanel.tsx     # NEW: Sensor calibration interface
+│       │   └── FrequencyAnalyzer.tsx    # NEW: Real-time frequency domain display
+│       ├── screens/
+│       │   ├── HomeScreen.tsx           # Main monitoring interface
+│       │   ├── CalibrationScreen.tsx    # NEW: Material calibration workflow
+│       │   ├── TrainingScreen.tsx       # NEW: User training data collection interface
+│       │   ├── DataManagementScreen.tsx # NEW: Manage collected training datasets
+│       │   └── HistoryScreen.tsx        # NEW: Anomaly history and reports
+│       ├── services/
+│       │   ├── BluetoothService.ts      # HC-05 Bluetooth manager (PRIMARY CONNECTION)
+│       │   ├── ApiService.ts            # POST vibration data to backend ML model
+│       │   ├── MaterialProfileService.ts # NEW: Manage material-specific settings
+│       │   ├── TrainingDataService.ts   # NEW: Manage user training data collection
+│       │   └── DataUploadService.ts     # NEW: Upload user training data to backend
+│       ├── utils/
+│       │   ├── DataParser.ts            # ENHANCED: Parse and preprocess piezo signals
+│       │   ├── SignalProcessor.ts       # NEW: FFT, filtering, feature extraction
+│       │   ├── CalibrationUtils.ts      # NEW: Sensor calibration algorithms
+│       │   ├── TrainingDataCollector.ts # NEW: Collect and validate user training data
+│       │   └── DataValidator.ts         # NEW: Validate quality of user-provided data
+│       └── connection/
+│           └── BluetoothManager.ts      # FOCUSED: Dedicated Bluetooth connection logic
+
+├── MLBackend/                           # Flask-based ML backend
+│   ├── app.py                          # ENHANCED: Main Flask server with user training endpoints
+│   ├── train_model.py                  # ENHANCED: LSTM training with user-provided data
+│   ├── retrain_model.py                # NEW: Retrain models with new user data
+│   ├── data_validation.py              # NEW: Validate user-uploaded training data
+│   ├── generate_data.py                # ENHANCED: Generate material-specific synthetic data
+│   ├── user_training/                  # NEW: Handle user training workflows
+│   │   ├── __init__.py
+│   │   ├── data_processor.py           # Process user-uploaded data
+│   │   ├── training_scheduler.py       # Queue and manage retraining jobs
+│   │   └── model_versioning.py         # Version control for user-specific models
+│   ├── signal_processing/              # NEW: Server-side signal processing
+│   │   ├── __init__.py
+│   │   ├── frequency_analysis.py       # FFT and spectral analysis
+│   │   ├── noise_filtering.py          # Advanced filtering algorithms
+│   │   └── feature_extraction.py       # Extract vibration characteristics
+│   ├── models/
+│   │   ├── base_models/                # Base pre-trained models
+│   │   │   ├── concrete/
+│   │   │   ├── wood/
+│   │   │   └── metal/
+│   │   ├── user_models/                # NEW: User-specific trained models
+│   │   │   ├── user_123/
+│   │   │   │   ├── concrete_custom/
+│   │   │   │   │   ├── model.h5
+│   │   │   │   │   └── params.json
+│   │   │   │   └── training_history.json
+│   │   │   └── user_456/
+│   │   └── model_registry.json         # NEW: Track all available models per user
+│   ├── data/
+│   │   ├── base_training_data/         # Original system training data
+│   │   │   ├── concrete/
+│   │   │   ├── wood/
+│   │   │   └── metal/
+│   │   ├── user_training_data/         # NEW: User-provided training data
+│   │   │   ├── user_123/
+│   │   │   │   ├── uploads/
+│   │   │   │   ├── validated/
+│   │   │   │   └── processed/
+│   │   │   └── user_456/
+│   │   ├── calibration_data/           # Calibration reference signals
+│   │   └── frequency_templates/        # Expected frequency patterns per material
+│   ├── config/
+│   │   ├── material_configs.json       # NEW: Material-specific parameters
+│   │   └── sensor_profiles.json        # NEW: Piezo sensor specifications
+│   └── requirements.txt                # UPDATED: Added scipy, librosa for signal processing
+
+└── Arduino/
+    ├── piezo_vibration_monitor.ino     # ENHANCED: High-frequency piezo sampling
+    ├── libraries/
+    │   ├── PiezoCalibration/           # NEW: Custom calibration library
+    │   └── SignalFiltering/            # NEW: Hardware-level noise filtering
+    └── config/
+        ├── sensor_config.h             # NEW: Piezo sensor parameters
+        └── sampling_config.h           # NEW: Sampling rate configurations
+
+
+How the Piezoelectric Anomaly Detection System Works
+🔧 Phase 1: Setup & Calibration
+Arduino Setup:
+
+Arduino samples piezoelectric sensor at 5-10kHz using high-precision ADC
+Hardware low-pass filter (op-amp based) removes noise above structural vibration frequencies (~2kHz)
+Anti-aliasing filter prevents frequency folding in digital sampling
+Calibration mode: Arduino generates test pulses and records sensor response curves
+BLUETOOTH ONLY: All communication via HC-05 module (9600-115200 baud) - no WiFi dependencies
+
+Mobile App Initial Setup:
+
+BluetoothManager.ts scans and pairs with HC-05 device automatically
+Connection status indicator shows signal strength and data flow rate
+User creates account/profile for personalized model tracking
+iOS-ONLY DEPLOYMENT: Simplified development focusing on single platform initially
+Device pairing stored securely using iOS Keychain for automatic reconnection
+
+Calibration Workflow:
+
+User selects material type (concrete, wood, metal, custom) via MaterialSelector.tsx
+CalibrationPanel.tsx guides through structured calibration sequence:
+
+Ambient noise baseline (10 seconds of no-tap data)
+Reference taps (20 gentle taps at different locations)
+Material response mapping (tap intensity vs frequency response)
+
+
+SignalProcessor.ts analyzes calibration data using FFT to establish:
+
+Dominant frequency ranges for the material
+Noise floor levels
+Sensor sensitivity coefficients
+
+
+Calibration parameters stored locally and uploaded for model initialization
+
+Phase 2: User Training Data Collection (OPTIONAL)
+Training Mode Activation:
+User navigates to TrainingScreen.tsx →
+Selects training type: "Expand Base Model" or "Train New Material" →
+App displays data collection progress bar and quality metrics →
+Real-time feedback shows signal quality and data sufficiency
+Normal Data Collection:
+App prompts: "Collect NORMAL vibration data from healthy areas" →
+User systematically taps 50-100 locations on sound material →
+TrainingDataCollector.ts records and labels each sample:
+  - Tap intensity (accelerometer-derived)
+  - Environmental conditions (time, temperature if available)
+  - Frequency spectrum characteristics
+DataValidator.ts performs real-time quality checks:
+  - Signal-to-noise ratio thresholds
+  - Frequency consistency validation
+  - Duplicate sample detection
+Anomaly Data Collection (Advanced Users):
+App prompts: "Collect ANOMALY data from known problem areas" →
+User tests confirmed defects: cracks, voids, delamination →
+Each sample tagged with defect type and severity →
+Visual confirmation prompts ensure proper labeling →
+Quality validation ensures anomalies have distinct signatures
+Backend Training Pipeline:
+DataUploadService.ts sends training package to backend →
+user_training/data_processor.py validates and preprocesses:
+  - Removes outliers and noise artifacts
+  - Balances normal vs anomaly sample ratios
+  - Augments data with synthetic variations
+retrain_model.py creates personalized model:
+  - Combines user data with relevant base training set
+  - Fine-tunes LSTM autoencoder architecture
+  - Cross-validates on holdout data
+model_versioning.py tracks performance metrics →
+Push notification: "Your custom model achieved 94% accuracy!"
+
+Phase 3: Real-Time Monitoring Loop
+1. High-Frequency Data Acquisition (Arduino):
+Continuous 5kHz sampling with circular buffer (1000 samples) →
+Hardware analog filtering (Butterworth 2-pole, fc=2kHz) →
+Digital oversampling and decimation for noise reduction →
+Packet assembly: 50-sample windows with timestamp →
+HC-05 transmission: "T:1698765432,V:2.34,2.45,2.12...2.67\n"
+Automatic gain control adjusts for different tap intensities
+2. Mobile Signal Processing (React Native App):
+BluetoothManager.ts maintains connection health monitoring →
+DataParser.ts extracts and validates incoming packets →
+SignalProcessor.ts performs comprehensive analysis:
+  - Windowing function (Hamming) to reduce spectral leakage
+  - FFT analysis with 256-point resolution
+  - Peak detection for dominant frequencies
+  - Statistical feature extraction (RMS, crest factor, spectral centroid)
+  - Rolling buffer management (3-second analysis windows)
+  - Environmental noise subtraction using calibration baseline
+3. Intelligent ML Inference (Flask Backend):
+ApiService.ts sends feature vector + metadata:
+  - Frequency domain features (spectral peaks, bandwidth)
+  - Time domain statistics (variance, skewness, kurtosis)
+  - User ID and material type
+  - Sensor calibration parameters
+  - Environmental context (if available)
+
+Backend model selection logic:
+  If user has custom model AND confidence > threshold → user_models/user_123/
+  Else if base model available for material → base_models/concrete/
+  Else → generic anomaly detector with reduced confidence
+
+LSTM autoencoder processing:
+  - Reconstruction error calculation
+  - Anomaly scoring with confidence intervals
+  - Frequency pattern matching against known signatures
+  - Temporal consistency checking (prevents single-point false positives)
+
+Response includes:
+  {
+    anomaly_score: 0.23,           // 0=normal, 1=anomaly
+    confidence: 0.87,              // Model certainty
+    model_used: "user_custom",     // Which model processed the data
+    dominant_frequency: 340.5,     // Hz
+    recommendations: ["collect_more_data", "check_sensor_mounting"]
+  }
+4. Rich Results Display (App Interface):
+LiveChart.tsx real-time dashboard:
+  - Dual-axis plot: raw waveform + frequency spectrum
+  - Color-coded anomaly probability timeline
+  - Model type indicator with performance badge
+  - Data quality indicators (SNR, connection stability)
+
+FrequencyAnalyzer.tsx detailed analysis:
+  - Waterfall plot showing frequency evolution over time
+  - Comparison overlay: current vs baseline signature
+  - Peak detection with frequency labeling
+  - Anomaly confidence bands
+
+AlertSystem.tsx notification management:
+  - Threshold-based anomaly alerts
+  - Pattern recognition for recurring issues
+  - Historical trend analysis
+  - Actionable recommendations (sensor repositioning, additional training data)
