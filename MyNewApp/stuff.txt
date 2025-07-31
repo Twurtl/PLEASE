@@ -202,7 +202,7 @@ Full file tree Structure:
 
 
 How the Piezoelectric Anomaly Detection System Works
-🔧 Phase 1: Setup & Calibration
+Phase 1: Setup & Calibration
 Arduino Setup:
 
 Arduino samples piezoelectric sensor at 5-10kHz using high-precision ADC
