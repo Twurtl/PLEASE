@@ -59,7 +59,7 @@ const CalibrationScreen = () => {
 
       {step === 2 && !loading && (
         <Text style={{ color: 'green', marginTop: 16 }}>
-          Calibration complete ✅
+          Calibration complete
         </Text>
       )}
     </View>

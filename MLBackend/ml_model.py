@@ -1,13 +1,20 @@
+# ml_model.py
 import numpy as np
 import json
 import os
 from typing import Dict, Any
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.models import load_model
+
 
 class AnomalyDetector:
     def __init__(self, model_path=None, config_path=None):
         """
         Initialize anomaly detector
-        
+
         Args:
             model_path: Path to trained LSTM model (optional)
             config_path: Path to model configuration (optional)
@@ -15,118 +22,109 @@ class AnomalyDetector:
         self.model = None
         self.config = self._load_config(config_path)
         self.threshold = self.config.get('anomaly_threshold', 0.5)
-        self.confidence_threshold = self.config.get('confidence_threshold', 0.7)
-        
+        self.confidence_threshold = self.config.get(
+            'confidence_threshold', 0.7)
+
         # Load model if available
         if model_path and os.path.exists(model_path):
             self._load_model(model_path)
         else:
             print("No trained model found. Using rule-based anomaly detection.")
-    
+
     def predict(self, features: Dict[str, Any]) -> Dict[str, Any]:
         """
         Predict anomaly from processed features
-        
-        Args:
-            features: Dictionary of processed features
-            
-        Returns:
-            dict: Prediction results with score, anomaly flag, and confidence
         """
         if self.model:
             return self._predict_with_model(features)
         else:
             return self._predict_with_rules(features)
-    
+
     def _predict_with_rules(self, features: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Rule-based anomaly detection (fallback when no ML model is available)
-        """
-        # Extract key features
         voltage_std = features.get('voltage_std', 0)
         voltage_range = features.get('voltage_range', 0)
         voltage_skewness = abs(features.get('voltage_skewness', 0))
         voltage_kurtosis = features.get('voltage_kurtosis', 0)
-        
-        # Simple rule-based scoring
+
         score = 0.0
-        
-        # High variance indicates potential anomaly
         if voltage_std > 0.5:
             score += 0.3
-        
-        # Large range indicates potential anomaly
         if voltage_range > 2.0:
             score += 0.2
-        
-        # High skewness indicates unusual distribution
         if voltage_skewness > 1.0:
             score += 0.2
-        
-        # High kurtosis indicates sharp peaks
         if voltage_kurtosis > 3.0:
             score += 0.2
-        
-        # Normalize score to 0-1 range
+
         score = min(score, 1.0)
-        
-        # Determine if anomaly
         is_anomaly = score > self.threshold
-        
-        # Calculate confidence based on feature quality
         confidence = min(0.8, 0.5 + (voltage_std * 0.3))
-        
+
         return {
             'score': score,
             'is_anomaly': is_anomaly,
             'confidence': confidence,
             'method': 'rule_based'
         }
-    
+
     def _predict_with_model(self, features: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            feature_vector = np.array([[
+                features[f] for f in self.config['feature_names']
+            ]])
+            feature_vector = np.reshape(
+                feature_vector, (1, self.config['window_size'], -1))
+            prediction = self.model.predict(feature_vector)[0][0]
+            is_anomaly = prediction > self.threshold
+
+            return {
+                'score': float(prediction),
+                'is_anomaly': bool(is_anomaly),
+                'confidence': float(prediction),
+                'method': 'ml_model'
+            }
+        except Exception as e:
+            print(f"Model prediction failed: {e}")
+            return self._predict_with_rules(features)
+
+    def train_model(self, X_train, y_train, model_save_path="backend/models/lstm_model.h5"):
         """
-        ML model-based prediction (placeholder for LSTM model)
+        Train an LSTM model and save it to disk
         """
-        # Convert features to model input format
-        # This would be implemented when you have a trained LSTM model
-        
-        # Placeholder implementation
-        score = 0.5  # Placeholder
-        is_anomaly = score > self.threshold
-        confidence = 0.8  # Placeholder
-        
-        return {
-            'score': score,
-            'is_anomaly': is_anomaly,
-            'confidence': confidence,
-            'method': 'ml_model'
-        }
-    
+        model = Sequential([
+            LSTM(64, input_shape=(X_train.shape[1], X_train.shape[2])),
+            Dense(1, activation='sigmoid')
+        ])
+        model.compile(optimizer=Adam(0.001),
+                      loss='binary_crossentropy', metrics=['accuracy'])
+
+        model.fit(
+            X_train, y_train,
+            epochs=20,
+            batch_size=32,
+            validation_split=0.2,
+            callbacks=[EarlyStopping(patience=3)],
+            verbose=1
+        )
+
+        model.save(model_save_path)
+        self.model = model
+        print(f"Model trained and saved to {model_save_path}")
+
     def _load_model(self, model_path: str):
         """
-        Load trained LSTM model
-        
-        Args:
-            model_path: Path to the model file
+        Load a pre-trained LSTM model
         """
         try:
-            # This would load your trained TensorFlow/Keras model
-            # from tensorflow import keras
-            # self.model = keras.models.load_model(model_path)
+            self.model = load_model(model_path)
             print(f"Model loaded from {model_path}")
         except Exception as e:
             print(f"Error loading model: {e}")
             self.model = None
-    
+
     def _load_config(self, config_path: str = None) -> Dict[str, Any]:
         """
-        Load model configuration
-        
-        Args:
-            config_path: Path to config file
-            
-        Returns:
-            dict: Configuration parameters
+        Load model configuration or use defaults
         """
         default_config = {
             'anomaly_threshold': 0.5,
@@ -140,7 +138,7 @@ class AnomalyDetector:
                 'frequency_dominant', 'frequency_bandwidth'
             ]
         }
-        
+
         if config_path and os.path.exists(config_path):
             try:
                 with open(config_path, 'r') as f:
@@ -148,29 +146,23 @@ class AnomalyDetector:
                 return {**default_config, **config}
             except Exception as e:
                 print(f"Error loading config: {e}")
-        
+
         return default_config
-    
+
     def update_threshold(self, new_threshold: float):
         """
-        Update anomaly detection threshold
-        
-        Args:
-            new_threshold: New threshold value (0-1)
+        Update anomaly score threshold
         """
         self.threshold = max(0.0, min(1.0, new_threshold))
         print(f"Anomaly threshold updated to: {self.threshold}")
-    
+
     def get_model_info(self) -> Dict[str, Any]:
         """
-        Get information about the current model
-        
-        Returns:
-            dict: Model information
+        Return info about the loaded model
         """
         return {
             'model_type': 'lstm' if self.model else 'rule_based',
             'threshold': self.threshold,
             'confidence_threshold': self.confidence_threshold,
             'config': self.config
-        } 
+        }

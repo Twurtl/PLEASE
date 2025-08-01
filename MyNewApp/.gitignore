@@ -68,3 +68,9 @@ env/
 venv/
 .env/
 mlbackend-env/
+
+venv/
+.env
+*.env
+__pycache__/
+*.pyc

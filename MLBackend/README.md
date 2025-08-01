@@ -22,6 +22,10 @@ Real-time anomaly detection backend using Flask-SocketIO for Arduino voltage mon
    source mlbackend-env/bin/activate
 
    python app.py
+   run server:
+   uvicorn app:app --host 0.0.0.0 --port 8000 --reload
+
+
    ```
 
 ## How It Works

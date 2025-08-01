@@ -65,9 +65,8 @@ const MainApp = () => {
 };
 
 const App = () => {
-  // Configure your server URL here
-  // For iOS simulator, use your computer's IP address
-  const serverUrl = __DEV__ ? 'ws://localhost:5050' : 'wss://your-production-server.com';
+  // Updated server URL - no /ws path needed
+  const serverUrl = 'ws://localhost:8000/ws';
 
   return (
     <WebSocketProvider serverUrl={serverUrl}>
