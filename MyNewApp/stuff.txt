@@ -15,7 +15,7 @@ Arduino (USB) → Python WebSocket Server → ML Model → React Native App
 How the System Works (Conceptually)
 Your system is a real-time anomaly monitoring loop using embedded hardware and mobile + backend infrastructure.
 
-⚙️ Flow:
+Flow:
 Data Generation (Arduino):
 
 The Arduino reads analog voltage from a sensor (i.e. vibration).
@@ -202,7 +202,7 @@ Full file tree Structure:
 
 
 How the Piezoelectric Anomaly Detection System Works
-🔧 Phase 1: Setup & Calibration
+Phase 1: Setup & Calibration
 Arduino Setup:
 
 Arduino samples piezoelectric sensor at 5-10kHz using high-precision ADC
