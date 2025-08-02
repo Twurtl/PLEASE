@@ -1,207 +1,264 @@
 # ml_model.py
-import numpy as np
 import json
+import numpy as np
 import os
-from typing import Dict, Any
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.callbacks import EarlyStopping
-from tensorflow.keras.models import load_model
-
+from typing import Dict, Any, Optional
+import pickle
+import joblib
 
 class AnomalyDetector:
-    def __init__(self, model_path=None, config_path=None):
-        """
-        Initialize anomaly detector
-
-        Args:
-            model_path: Path to trained LSTM model (optional)
-            config_path: Path to model configuration (optional)
-        """
+    def __init__(self, config_path: Optional[str] = None):
         self.model = None
-        self.config = self._load_config(config_path)
-        self.threshold = self.config.get('anomaly_threshold', 0.5)
-        self.confidence_threshold = self.config.get(
-            'confidence_threshold', 0.7)
+        self.threshold = 0.5
+        self.model_type = None
+        self.scaler = None
+        self.is_loaded = False
+        self.window_size = 50
+        self.current_window = 0
+        self.window_progress = 0.0
         
-        # Rolling window for LSTM prediction
-        self.feature_window = []
-        self.window_size = self.config.get('window_size', 50)
-
-        # Load model if available
-        if model_path and os.path.exists(model_path):
-            self._load_model(model_path)
-        else:
-            print("No trained model found. Using rule-based anomaly detection.")
-
-    def predict(self, features: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Predict anomaly from processed features
-        Returns detailed status for frontend real-time updates
-        """
-        if self.model:
-            return self._predict_with_model(features)
-        else:
-            return self._predict_with_rules(features)
-
-    def _predict_with_rules(self, features: Dict[str, Any]) -> Dict[str, Any]:
-        voltage_std = features.get('voltage_std', 0)
-        voltage_range = features.get('voltage_range', 0)
-        voltage_skewness = abs(features.get('voltage_skewness', 0))
-        voltage_kurtosis = features.get('voltage_kurtosis', 0)
-
-        score = 0.0
-        if voltage_std > 0.5:
-            score += 0.3
-        if voltage_range > 2.0:
-            score += 0.2
-        if voltage_skewness > 1.0:
-            score += 0.2
-        if voltage_kurtosis > 3.0:
-            score += 0.2
-
-        score = min(score, 1.0)
-        is_anomaly = score > self.threshold
-        confidence = min(0.8, 0.5 + (voltage_std * 0.3))
-
-        return {
-            'score': score,
-            'is_anomaly': is_anomaly,
-            'confidence': confidence,
-            'method': 'rule_based'
-        }
-
-    def _predict_with_model(self, features: Dict[str, Any]) -> Dict[str, Any]:
-        try:
-            # Add features to rolling window
-            feature_vector = [features[f] for f in self.config['feature_names']]
-            self.feature_window.append(feature_vector)
-            
-            # Keep only the last window_size features
-            if len(self.feature_window) > self.window_size:
-                self.feature_window = self.feature_window[-self.window_size:]
-            
-            # Calculate window status for frontend
-            window_progress = min(len(self.feature_window) / self.window_size, 1.0)
-            
-            # Only predict if we have enough data
-            if len(self.feature_window) == self.window_size:
-                # Reshape to (1, window_size, features) for LSTM
-                feature_array = np.array(self.feature_window)
-                feature_array = np.reshape(feature_array, (1, self.window_size, -1))
-                
-                prediction = self.model.predict(feature_array, verbose=0)[0][0]
-                is_anomaly = prediction > self.threshold
-
-                return {
-                    'score': float(prediction),
-                    'is_anomaly': bool(is_anomaly),
-                    'confidence': float(prediction),
-                    'method': 'ml_model',
-                    'window_progress': window_progress,
-                    'window_size': self.window_size,
-                    'current_window': len(self.feature_window),
-                    'status': 'ml_ready'
-                }
-            else:
-                # Not enough data yet, use rule-based but show progress
-                rule_prediction = self._predict_with_rules(features)
-                rule_prediction.update({
-                    'window_progress': window_progress,
-                    'window_size': self.window_size,
-                    'current_window': len(self.feature_window),
-                    'status': 'warming_up'
-                })
-                return rule_prediction
-                
-        except Exception as e:
-            print(f"Model prediction failed: {e}")
-            rule_prediction = self._predict_with_rules(features)
-            rule_prediction.update({
-                'window_progress': 0.0,
-                'window_size': self.window_size,
-                'current_window': len(self.feature_window),
-                'status': 'error'
-            })
-            return rule_prediction
-
-    def train_model(self, X_train, y_train, model_save_path="backend/models/lstm_model.h5"):
-        """
-        Train an LSTM model and save it to disk
-        """
-        model = Sequential([
-            LSTM(64, input_shape=(X_train.shape[1], X_train.shape[2])),
-            Dense(1, activation='sigmoid')
-        ])
-        model.compile(optimizer=Adam(0.001),
-                      loss='binary_crossentropy', metrics=['accuracy'])
-
-        model.fit(
-            X_train, y_train,
-            epochs=20,
-            batch_size=32,
-            validation_split=0.2,
-            callbacks=[EarlyStopping(patience=3)],
-            verbose=1
-        )
-
-        model.save(model_save_path)
-        self.model = model
-        print(f"Model trained and saved to {model_save_path}")
-
-    def _load_model(self, model_path: str):
-        """
-        Load a pre-trained LSTM model
-        """
-        try:
-            self.model = load_model(model_path)
-            print(f"Model loaded from {model_path}")
-        except Exception as e:
-            print(f"Error loading model: {e}")
-            self.model = None
-
-    def _load_config(self, config_path: str = None) -> Dict[str, Any]:
-        """
-        Load model configuration or use defaults
-        """
-        default_config = {
-            'anomaly_threshold': 0.5,
-            'confidence_threshold': 0.7,
-            'window_size': 50,
-            'sample_rate': 10,
-            'feature_names': [
-                'voltage_mean', 'voltage_std', 'voltage_min', 'voltage_max',
-                'voltage_range', 'voltage_variance', 'voltage_skewness',
-                'voltage_kurtosis', 'time_delta_mean', 'time_delta_std',
-                'frequency_dominant', 'frequency_bandwidth'
-            ]
-        }
-
         if config_path and os.path.exists(config_path):
-            try:
-                with open(config_path, 'r') as f:
-                    config = json.load(f)
-                return {**default_config, **config}
-            except Exception as e:
-                print(f"Error loading config: {e}")
-
-        return default_config
-
+            self.load_config(config_path)
+    
+    def load_config(self, config_path: str):
+        """Load configuration from JSON file"""
+        try:
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+                self.threshold = config.get('threshold', 0.5)
+                self.window_size = config.get('window_size', 50)
+                print(f"✅ Configuration loaded from {config_path}")
+        except Exception as e:
+            print(f"⚠️ Could not load config from {config_path}: {e}")
+    
+    def load_model(self, model_path: str):
+        """Load ML model from file"""
+        try:
+            if not os.path.exists(model_path):
+                print(f"⚠️ Model file not found: {model_path}")
+                print("🔄 Using rule-based detection as fallback")
+                self.model = None
+                self.model_type = 'rule_based'
+                self.is_loaded = True
+                return
+            
+            # Determine model type based on file extension
+            file_ext = os.path.splitext(model_path)[1].lower()
+            
+            if file_ext == '.pkl':
+                # Scikit-learn model
+                self.model = joblib.load(model_path)
+                self.model_type = 'sklearn'
+            elif file_ext == '.h5':
+                # TensorFlow/Keras model
+                try:
+                    import tensorflow as tf
+                    self.model = tf.keras.models.load_model(model_path)
+                    self.model_type = 'tensorflow'
+                except ImportError:
+                    print("⚠️ TensorFlow not available, using rule-based detection")
+                    self.model = None
+                    self.model_type = 'rule_based'
+            elif file_ext == '.pt' or file_ext == '.pth':
+                # PyTorch model
+                try:
+                    import torch
+                    self.model = torch.load(model_path, map_location='cpu')
+                    self.model_type = 'pytorch'
+                except ImportError:
+                    print("⚠️ PyTorch not available, using rule-based detection")
+                    self.model = None
+                    self.model_type = 'rule_based'
+            else:
+                print(f"⚠️ Unsupported model format: {file_ext}")
+                self.model = None
+                self.model_type = 'rule_based'
+            
+            # Try to load associated scaler if it exists
+            scaler_path = model_path.replace(file_ext, '_scaler.pkl')
+            if os.path.exists(scaler_path):
+                self.scaler = joblib.load(scaler_path)
+                print(f"✅ Scaler loaded from {scaler_path}")
+            
+            self.is_loaded = True
+            print(f"✅ Model loaded successfully: {model_path} (Type: {self.model_type})")
+            
+        except Exception as e:
+            print(f"❌ Error loading model from {model_path}: {e}")
+            print("🔄 Falling back to rule-based detection")
+            self.model = None
+            self.model_type = 'rule_based'
+            self.is_loaded = True
+    
+    def predict(self, features: Dict[str, Any]) -> Dict[str, Any]:
+        """Make anomaly prediction based on features"""
+        try:
+            # Update window progress
+            sample_count = features.get('sample_count', 0)
+            self.current_window = sample_count
+            self.window_progress = min(sample_count / self.window_size, 1.0)
+            
+            # Base prediction structure
+            prediction = {
+                'anomaly_score': 0.0,
+                'is_anomaly': False,
+                'confidence': 0.0,
+                'method': self.model_type or 'rule_based',
+                'status': 'ml_ready' if self.is_loaded else 'warming_up',
+                'window_progress': self.window_progress,
+                'window_size': self.window_size,
+                'current_window': self.current_window
+            }
+            
+            # Check if we have enough samples
+            if sample_count < self.window_size:
+                prediction['status'] = 'warming_up'
+                prediction['anomaly_score'] = 0.0
+                prediction['is_anomaly'] = False
+                prediction['confidence'] = 0.0
+                return prediction
+            
+            # Extract features for prediction
+            if self.model and self.model_type != 'rule_based':
+                prediction.update(self._ml_predict(features))
+            else:
+                prediction.update(self._rule_based_predict(features))
+            
+            prediction['status'] = 'ml_ready'
+            return prediction
+            
+        except Exception as e:
+            print(f"❌ Prediction error: {e}")
+            return {
+                'anomaly_score': 0.0,
+                'is_anomaly': False,
+                'confidence': 0.0,
+                'method': 'error',
+                'status': 'error',
+                'window_progress': self.window_progress,
+                'window_size': self.window_size,
+                'current_window': self.current_window,
+                'error': str(e)
+            }
+    
+    def _ml_predict(self, features: Dict[str, Any]) -> Dict[str, Any]:
+        """Make prediction using loaded ML model"""
+        try:
+            # Prepare feature vector
+            feature_vector = self._prepare_features(features)
+            
+            if self.scaler:
+                feature_vector = self.scaler.transform([feature_vector])
+            else:
+                feature_vector = np.array([feature_vector])
+            
+            if self.model_type == 'sklearn':
+                # Scikit-learn model
+                anomaly_score = self.model.decision_function(feature_vector)[0]
+                # Normalize score to 0-1 range
+                anomaly_score = max(0, min(1, (anomaly_score + 1) / 2))
+                
+            elif self.model_type == 'tensorflow':
+                # TensorFlow/Keras model
+                prediction = self.model.predict(feature_vector, verbose=0)
+                anomaly_score = float(prediction[0][0])
+                
+            elif self.model_type == 'pytorch':
+                # PyTorch model
+                import torch
+                with torch.no_grad():
+                    tensor_input = torch.FloatTensor(feature_vector)
+                    prediction = self.model(tensor_input)
+                    anomaly_score = float(prediction.numpy()[0])
+            else:
+                # Fallback to rule-based
+                return self._rule_based_predict(features)
+            
+            is_anomaly = anomaly_score > self.threshold
+            confidence = abs(anomaly_score - self.threshold) / (1 - self.threshold) if is_anomaly else abs(anomaly_score - self.threshold) / self.threshold
+            confidence = min(1.0, confidence)
+            
+            return {
+                'anomaly_score': float(anomaly_score),
+                'is_anomaly': is_anomaly,
+                'confidence': float(confidence),
+                'method': f'ml_model_{self.model_type}'
+            }
+            
+        except Exception as e:
+            print(f"❌ ML prediction error: {e}")
+            return self._rule_based_predict(features)
+    
+    def _rule_based_predict(self, features: Dict[str, Any]) -> Dict[str, Any]:
+        """Fallback rule-based anomaly detection"""
+        try:
+            # Simple rule-based detection using statistical measures
+            voltage_std = features.get('voltage_std', 0.0)
+            voltage_mean = features.get('voltage_mean', 0.0)
+            voltage_max = features.get('voltage_max', 0.0)
+            voltage_min = features.get('voltage_min', 0.0)
+            
+            # Calculate coefficient of variation
+            cv = voltage_std / voltage_mean if voltage_mean != 0 else 0
+            
+            # Calculate range ratio
+            voltage_range = voltage_max - voltage_min
+            range_ratio = voltage_range / voltage_mean if voltage_mean != 0 else 0
+            
+            # Simple heuristic: high variability suggests anomaly
+            variability_score = min(1.0, (cv * 2 + range_ratio) / 2)
+            
+            # Threshold-based decision
+            is_anomaly = variability_score > self.threshold
+            confidence = abs(variability_score - self.threshold) / (1 - self.threshold) if is_anomaly else abs(variability_score - self.threshold) / self.threshold
+            confidence = min(1.0, confidence)
+            
+            return {
+                'anomaly_score': float(variability_score),
+                'is_anomaly': is_anomaly,
+                'confidence': float(confidence),
+                'method': 'rule_based'
+            }
+            
+        except Exception as e:
+            print(f"❌ Rule-based prediction error: {e}")
+            return {
+                'anomaly_score': 0.0,
+                'is_anomaly': False,
+                'confidence': 0.0,
+                'method': 'error'
+            }
+    
+    def _prepare_features(self, features: Dict[str, Any]) -> list:
+        """Prepare feature vector for ML model"""
+        # Extract numerical features in a consistent order
+        feature_vector = [
+            features.get('voltage_mean', 0.0),
+            features.get('voltage_std', 0.0),
+            features.get('voltage_min', 0.0),
+            features.get('voltage_max', 0.0),
+            features.get('voltage_range', 0.0),
+            features.get('voltage_median', 0.0),
+            features.get('voltage_q25', 0.0),
+            features.get('voltage_q75', 0.0),
+            features.get('sample_count', 0.0),
+            features.get('time_span', 0.0)
+        ]
+        return feature_vector
+    
     def update_threshold(self, new_threshold: float):
-        """
-        Update anomaly score threshold
-        """
+        """Update anomaly detection threshold"""
         self.threshold = max(0.0, min(1.0, new_threshold))
-        print(f"Anomaly threshold updated to: {self.threshold}")
-
+        print(f"🔄 Threshold updated to: {self.threshold}")
+    
     def get_model_info(self) -> Dict[str, Any]:
-        """
-        Return info about the loaded model
-        """
+        """Get information about the loaded model"""
         return {
-            'model_type': 'lstm' if self.model else 'rule_based',
+            'is_loaded': self.is_loaded,
+            'model_type': self.model_type,
             'threshold': self.threshold,
-            'confidence_threshold': self.confidence_threshold,
-            'config': self.config
+            'window_size': self.window_size,
+            'has_scaler': self.scaler is not None,
+            'current_window': self.current_window,
+            'window_progress': self.window_progress
         }

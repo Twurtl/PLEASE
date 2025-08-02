@@ -1,3 +1,4 @@
+// src/screens/LoginScreen.tsx
 import React, { useState } from 'react';
 import {
   View,
@@ -6,145 +7,67 @@ import {
   TouchableOpacity,
   StyleSheet,
   Alert,
+  SafeAreaView,
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView
 } from 'react-native';
 import { useAuth } from '../services/AuthService';
+import ApiService from '../services/ApiService';
 
 interface LoginScreenProps {
-  navigation?: any;
-  onSuccess?: (modelId: string, modelName: string) => void;
-  onNavigateToRegister?: () => void;
+  onLoginSuccess: (modelId: string, modelName: string, isGuest?: boolean) => void;
 }
 
-const LoginScreen: React.FC<LoginScreenProps> = ({
-  navigation,
-  onSuccess,
-  onNavigateToRegister
-}) => {
+const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [email, setEmail] = useState('');
+  const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [showRegister, setShowRegister] = useState(false);
-  const { login } = useAuth();
+  const [guestLoading, setGuestLoading] = useState(false);
+  const [availableModels, setAvailableModels] = useState([]);
+  const [showModelSelection, setShowModelSelection] = useState(false);
+  const [selectedModel, setSelectedModel] = useState(null);
+  const [isGuestMode, setIsGuestMode] = useState(false);
+
+  const { login, register } = useAuth();
 
   const handleLogin = async () => {
-    if (!username || !password) {
-      Alert.alert('Error', 'Please fill in all fields');
+    if (!username.trim() || !password.trim()) {
+      Alert.alert('Error', 'Please enter both username and password');
       return;
     }
 
     setIsLoading(true);
     try {
-      const success = await login(username, password);
+      const success = await login(username.trim(), password.trim());
       if (success) {
-        // Call onSuccess callback if provided
-        if (onSuccess) {
-          onSuccess('default', 'Default Model'); // You can customize this
-        }
-        console.log('Login successful');
+        // Get user models after successful login
+        const models = await ApiService.get('/models');
+        setAvailableModels(models);
+        setShowModelSelection(true);
+        setIsGuestMode(false);
       } else {
         Alert.alert('Error', 'Invalid username or password');
       }
     } catch (error) {
+      console.error('Login error:', error);
       Alert.alert('Error', 'Login failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleNavigateToRegister = () => {
-    if (navigation && navigation.navigate) {
-      // If using React Navigation
-      navigation.navigate('Register');
-    } else if (onNavigateToRegister) {
-      // If using custom navigation callback
-      onNavigateToRegister();
-    } else {
-      // Fallback: toggle register view inline
-      setShowRegister(true);
-    }
-  };
-
-  // Simple inline register form as fallback
-  if (showRegister) {
-    return <RegisterForm onBack={() => setShowRegister(false)} onSuccess={onSuccess} />;
-  }
-
-  return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Anomaly Detection</Text>
-      <Text style={styles.subtitle}>Sign in to your account</Text>
-
-      <View style={styles.form}>
-        <TextInput
-          style={styles.input}
-          placeholder="Username"
-          value={username}
-          onChangeText={setUsername}
-          autoCapitalize="none"
-          autoCorrect={false}
-          textContentType="username"
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Password"
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-          autoCapitalize="none"
-          autoCorrect={false}
-          textContentType="password"
-          autoComplete="off"
-        />
-
-        <TouchableOpacity
-          style={[styles.button, isLoading && styles.buttonDisabled]}
-          onPress={handleLogin}
-          disabled={isLoading}
-        >
-          {isLoading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>Sign In</Text>
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.linkButton}
-          onPress={handleNavigateToRegister}
-        >
-          <Text style={styles.linkText}>
-            Don't have an account? Sign up
-          </Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-};
-
-// Simple inline register component as fallback
-interface RegisterFormProps {
-  onBack: () => void;
-  onSuccess?: (modelId: string, modelName: string) => void;
-}
-
-const RegisterForm: React.FC<RegisterFormProps> = ({ onBack, onSuccess }) => {
-  const [username, setUsername] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const { register } = useAuth();
-
   const handleRegister = async () => {
-    if (!username || !email || !password || !confirmPassword) {
+    if (!username.trim() || !email.trim() || !password.trim()) {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
 
-    if (password !== confirmPassword) {
-      Alert.alert('Error', 'Passwords do not match');
+    if (!isValidEmail(email)) {
+      Alert.alert('Error', 'Please enter a valid email address');
       return;
     }
 
@@ -155,161 +78,444 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onBack, onSuccess }) => {
 
     setIsLoading(true);
     try {
-      const success = await register(username, email, password);
+      const success = await register(username.trim(), email.trim(), password.trim());
       if (success) {
-        console.log('Registration successful');
-        if (onSuccess) {
-          onSuccess('default', 'Default Model');
-        }
+        Alert.alert('Success', 'Account created successfully!', [
+          { text: 'OK', onPress: () => setIsRegisterMode(false) }
+        ]);
       } else {
-        Alert.alert('Error', 'Registration failed. Username or email might already exist.');
+        Alert.alert('Error', 'Registration failed. Username or email may already exist.');
       }
     } catch (error) {
+      console.error('Registration error:', error);
       Alert.alert('Error', 'Registration failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Create Account</Text>
-      <Text style={styles.subtitle}>Sign up for anomaly detection</Text>
+  const handleGuestLogin = async () => {
+    setGuestLoading(true);
+    try {
+      // Get preset models for guest users
+      const response = await fetch('http://localhost:8000/api/guest/models');
+      if (response.ok) {
+        const models = await response.json();
+        setAvailableModels(models.filter(model => model.is_preset));
+        setShowModelSelection(true);
+        setIsGuestMode(true);
+      } else {
+        Alert.alert('Error', 'Failed to load guest models');
+      }
+    } catch (error) {
+      console.error('Guest login error:', error);
+      Alert.alert('Error', 'Failed to connect to server');
+    } finally {
+      setGuestLoading(false);
+    }
+  };
 
-      <View style={styles.form}>
-        <TextInput
-          style={styles.input}
-          placeholder="Username"
-          value={username}
-          onChangeText={setUsername}
-          autoCapitalize="none"
-          autoCorrect={false}
-          textContentType="username"
-        />
+  const handleModelSelection = (model) => {
+    setSelectedModel(model);
+  };
 
-        <TextInput
-          style={styles.input}
-          placeholder="Email"
-          value={email}
-          onChangeText={setEmail}
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="email-address"
-          textContentType="emailAddress"
-        />
+  const proceedWithModel = () => {
+    if (selectedModel) {
+      onLoginSuccess(selectedModel.id, selectedModel.name, isGuestMode);
+    }
+  };
 
-        <TextInput
-          style={styles.input}
-          placeholder="Password"
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-          autoCapitalize="none"
-          autoCorrect={false}
-          passwordRules="minlength: 6;"
-          textContentType="newPassword"
-          autoComplete="off"
-        />
+  const isValidEmail = (email: string) => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
 
-        <TextInput
-          style={styles.input}
-          placeholder="Confirm Password"
-          value={confirmPassword}
-          onChangeText={setConfirmPassword}
-          secureTextEntry
-          autoCapitalize="none"
-          autoCorrect={false}
-          textContentType="newPassword"
-          autoComplete="off"
-        />
+  const resetForm = () => {
+    setUsername('');
+    setPassword('');
+    setEmail('');
+    setShowModelSelection(false);
+    setSelectedModel(null);
+    setAvailableModels([]);
+    setIsGuestMode(false);
+  };
 
-        <TouchableOpacity
-          style={[styles.button, isLoading && styles.buttonDisabled]}
-          onPress={handleRegister}
-          disabled={isLoading}
-        >
-          {isLoading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>Create Account</Text>
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.linkButton}
-          onPress={onBack}
-        >
-          <Text style={styles.linkText}>
-            Already have an account? Sign in
+  if (showModelSelection) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <ScrollView contentContainerStyle={styles.scrollContainer}>
+          <Text style={styles.title}>
+            {isGuestMode ? 'Select a Preset Model' : 'Select a Model'}
           </Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+          
+          {isGuestMode && (
+            <View style={styles.guestBanner}>
+              <Text style={styles.guestBannerText}>
+                🎯 Guest Mode - Using Preset Models Only
+              </Text>
+              <Text style={styles.guestBannerSubtext}>
+                Create an account to upload and use your own models
+              </Text>
+            </View>
+          )}
+
+          <View style={styles.modelsList}>
+            {availableModels.map((model) => (
+              <TouchableOpacity
+                key={model.id}
+                style={[
+                  styles.modelCard,
+                  selectedModel?.id === model.id && styles.selectedModelCard
+                ]}
+                onPress={() => handleModelSelection(model)}
+              >
+                <View style={styles.modelHeader}>
+                  <Text style={styles.modelName}>{model.name}</Text>
+                  <View style={[styles.modelBadge, model.is_preset && styles.presetBadge]}>
+                    <Text style={styles.modelBadgeText}>
+                      {model.is_preset ? 'PRESET' : 'CUSTOM'}
+                    </Text>
+                  </View>
+                </View>
+                
+                <Text style={styles.modelMaterial}>
+                  Material: {model.material_type.toUpperCase()}
+                </Text>
+                
+                {model.accuracy && (
+                  <Text style={styles.modelAccuracy}>
+                    Accuracy: {(model.accuracy * 100).toFixed(1)}%
+                  </Text>
+                )}
+                
+                {model.description && (
+                  <Text style={styles.modelDescription}>{model.description}</Text>
+                )}
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <View style={styles.buttonContainer}>
+            <TouchableOpacity
+              style={[styles.button, styles.secondaryButton]}
+              onPress={resetForm}
+            >
+              <Text style={styles.secondaryButtonText}>Back</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={[
+                styles.button,
+                styles.primaryButton,
+                !selectedModel && styles.disabledButton
+              ]}
+              onPress={proceedWithModel}
+              disabled={!selectedModel}
+            >
+              <Text style={styles.primaryButtonText}>
+                {isGuestMode ? 'Start as Guest' : 'Continue'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.container}
+      >
+        <ScrollView contentContainerStyle={styles.scrollContainer}>
+          <View style={styles.header}>
+            <Text style={styles.title}>Anomaly Detection</Text>
+            <Text style={styles.subtitle}>
+              {isRegisterMode ? 'Create Account' : 'Sign In'}
+            </Text>
+          </View>
+
+          <View style={styles.form}>
+            <TextInput
+              style={styles.input}
+              placeholder="Username"
+              value={username}
+              onChangeText={setUsername}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            {isRegisterMode && (
+              <TextInput
+                style={styles.input}
+                placeholder="Email"
+                value={email}
+                onChangeText={setEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            )}
+
+            <TextInput
+              style={styles.input}
+              placeholder="Password"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <TouchableOpacity
+              style={[styles.button, styles.primaryButton]}
+              onPress={isRegisterMode ? handleRegister : handleLogin}
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.primaryButtonText}>
+                  {isRegisterMode ? 'Create Account' : 'Sign In'}
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.button, styles.secondaryButton]}
+              onPress={() => {
+                setIsRegisterMode(!isRegisterMode);
+                setUsername('');
+                setPassword('');
+                setEmail('');
+              }}
+            >
+              <Text style={styles.secondaryButtonText}>
+                {isRegisterMode 
+                  ? 'Already have an account? Sign In' 
+                  : 'Need an account? Register'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.divider}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>OR</Text>
+            <View style={styles.dividerLine} />
+          </View>
+
+          <TouchableOpacity
+            style={[styles.button, styles.guestButton]}
+            onPress={handleGuestLogin}
+            disabled={guestLoading}
+          >
+            {guestLoading ? (
+              <ActivityIndicator color="#666" />
+            ) : (
+              <>
+                <Text style={styles.guestButtonText}>Continue as Guest</Text>
+                <Text style={styles.guestButtonSubtext}>
+                  Use preset models without an account
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>
+              Guest users can access preset trained models for immediate testing.
+              Create an account to upload custom models and save session history.
+            </Text>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    padding: 20,
     backgroundColor: '#f5f5f5',
   },
+  scrollContainer: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    padding: 20,
+  },
+  header: {
+    alignItems: 'center',
+    marginBottom: 40,
+  },
   title: {
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 10,
     color: '#333',
+    marginBottom: 8,
   },
   subtitle: {
     fontSize: 16,
-    textAlign: 'center',
-    marginBottom: 40,
     color: '#666',
   },
   form: {
-    backgroundColor: '#fff',
-    padding: 20,
-    borderRadius: 10,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 3.84,
-    elevation: 5,
+    marginBottom: 30,
   },
   input: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 15,
+    marginBottom: 15,
+    fontSize: 16,
     borderWidth: 1,
     borderColor: '#ddd',
-    borderRadius: 8,
-    padding: 15,
-    marginBottom: 15,
-    fontSize: 16,
   },
   button: {
-    backgroundColor: '#007AFF',
-    padding: 15,
     borderRadius: 8,
+    padding: 15,
     alignItems: 'center',
     marginBottom: 15,
   },
-  buttonDisabled: {
-    backgroundColor: '#ccc',
+  primaryButton: {
+    backgroundColor: '#007AFF',
   },
-  buttonText: {
+  primaryButtonText: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: 'bold',
   },
-  linkButton: {
-    alignItems: 'center',
+  secondaryButton: {
+    backgroundColor: 'transparent',
   },
-  linkText: {
+  secondaryButtonText: {
     color: '#007AFF',
     fontSize: 14,
+  },
+  guestButton: {
+    backgroundColor: '#fff',
+    borderWidth: 2,
+    borderColor: '#007AFF',
+    borderStyle: 'dashed',
+  },
+  guestButtonText: {
+    color: '#007AFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  guestButtonSubtext: {
+    color: '#666',
+    fontSize: 12,
+  },
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 20,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#ddd',
+  },
+  dividerText: {
+    marginHorizontal: 15,
+    color: '#666',
+    fontSize: 14,
+  },
+  footer: {
+    marginTop: 20,
+    paddingHorizontal: 10,
+  },
+  footerText: {
+    fontSize: 12,
+    color: '#666',
+    textAlign: 'center',
+    lineHeight: 16,
+  },
+  // Model selection styles
+  guestBanner: {
+    backgroundColor: '#E8F4FD',
+    borderRadius: 8,
+    padding: 15,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#007AFF',
+  },
+  guestBannerText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#007AFF',
+    marginBottom: 4,
+  },
+  guestBannerSubtext: {
+    fontSize: 12,
+    color: '#666',
+  },
+  modelsList: {
+    marginBottom: 20,
+  },
+  modelCard: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 15,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  selectedModelCard: {
+    borderColor: '#007AFF',
+    borderWidth: 2,
+    backgroundColor: '#F8FBFF',
+  },
+  modelHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 8,
+  },
+  modelName: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    flex: 1,
+    marginRight: 10,
+  },
+  modelBadge: {
+    backgroundColor: '#666',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  presetBadge: {
+    backgroundColor: '#007AFF',
+  },
+  modelBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  modelMaterial: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 4,
+  },
+  modelAccuracy: {
+    fontSize: 14,
+    color: '#28a745',
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  modelDescription: {
+    fontSize: 12,
+    color: '#666',
+    fontStyle: 'italic',
+  },
+  buttonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  disabledButton: {
+    opacity: 0.5,
   },
 });
 

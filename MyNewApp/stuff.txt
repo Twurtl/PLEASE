@@ -2,11 +2,11 @@ current backend:
 MLBackend/
 ├── app.py                    # Updated Flask + SocketIO server
 ├── database.py              # New: Database models and services
-├── websocket_handler.py      # Keep existing if still needed
 ├── ml_model.py              # Keep existing LSTM model inference
 ├── data_processor.py        # Keep existing signal processing
 ├── models/
-│   └── lstm_anomaly.h5      # existing trained model
+│   └── preset/      # existing trained model
+│   └── user/      # user models
 ├── config/
 │   └── model_config.json    # Your existing model parameters
 ├── requirements.txt         # Updated with new dependencies

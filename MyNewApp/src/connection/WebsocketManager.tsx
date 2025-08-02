@@ -27,9 +27,6 @@ export interface ServerStatus {
   server_status: string;
   connected_clients: number;
   serial_connected: boolean;
-  detection_running: boolean;
-  current_model_id?: string;
-  current_session_id?: string;
   detector_info: any;
   timestamp: number;
 }
@@ -42,7 +39,6 @@ export interface WebSocketContextType {
   connectionStatus: 'connecting' | 'connected' | 'disconnected' | 'error';
   serverStatus: ServerStatus | null;
   serialConnected: boolean;
-  detectionRunning: boolean;
   mlStatus: MLStatus | null;
   reconnect: () => void;
   sendMessage: (message: any) => void;
@@ -50,6 +46,8 @@ export interface WebSocketContextType {
   requestStatus: () => void;
   connectToArduino: () => void;
   disconnectFromArduino: () => void;
+  reconnectSerial: () => void;
+  selectModel: (modelId: string, userId?: number) => void;
   startDetection: () => void;
   stopDetection: () => void;
 }
@@ -72,7 +70,6 @@ export const WebSocketProvider = ({
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected' | 'error'>('disconnected');
   const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null);
   const [serialConnected, setSerialConnected] = useState(false);
-  const [detectionRunning, setDetectionRunning] = useState(false);
   const [mlStatus, setMlStatus] = useState<MLStatus | null>(null);
   const [lastMessage, setLastMessage] = useState<any | null>(null);
 
@@ -115,7 +112,6 @@ export const WebSocketProvider = ({
         setConnectionStatus('disconnected');
         setServerStatus(null);
         setSerialConnected(false);
-        setDetectionRunning(false);
 
         // Attempt to reconnect if it wasn't a manual disconnect
         if (reason !== 'io client disconnect' && reconnectAttemptsRef.current < maxReconnectAttempts) {
@@ -123,15 +119,6 @@ export const WebSocketProvider = ({
         } else if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
           console.log('Max reconnection attempts reached');
           setConnectionStatus('error');
-        }
-      });
-
-      // Handle connection confirmation
-      socketRef.current.on('connection_confirmed', (data: any) => {
-        console.log('Connection confirmed:', data);
-        if (data.server_info) {
-          setSerialConnected(data.server_info.serial_connected || false);
-          setDetectionRunning(data.server_info.detection_running || false);
         }
       });
 
@@ -143,11 +130,11 @@ export const WebSocketProvider = ({
 
         if (data.prediction) {
           setLatestData({
-            anomaly_score: data.prediction.anomaly_score || 0,
-            is_anomaly: data.prediction.is_anomaly || false,
-            confidence: data.prediction.confidence || 0,
+            anomaly_score: data.prediction.anomaly_score,
+            is_anomaly: data.prediction.is_anomaly,
+            confidence: data.prediction.confidence,
             timestamp: data.timestamp || Date.now(),
-            voltage: data.voltage || 0,
+            voltage: data.voltage,
             method: data.prediction.method,
             features: data.prediction.features,
             ml_status: data.ml_status
@@ -164,39 +151,46 @@ export const WebSocketProvider = ({
       socketRef.current.on('arduino_raw_data', (data: any) => {
         console.log('Received raw arduino data:', data);
         setLatestRaw(JSON.stringify(data));
+        // You can process raw data here if needed
       });
 
       // Handle server status updates
       socketRef.current.on('status_update', (data: any) => {
         console.log('Server status update:', data);
-        updateServerStatus(data);
+        setServerStatus({
+          server_status: data.server_status || 'running',
+          connected_clients: data.connected_clients || 0,
+          serial_connected: data.serial_connected || false,
+          detector_info: data.detector_info || {},
+          timestamp: data.timestamp || Date.now()
+        });
+        setSerialConnected(data.serial_connected || false);
       });
 
-      socketRef.current.on('status_response', (data: any) => {
-        console.log('Status response:', data);
-        updateServerStatus(data);
-      });
-
-      // Handle Arduino connection status
+      // Handle Arduino status updates
       socketRef.current.on('arduino_status', (data: any) => {
-        console.log('Arduino status:', data);
+        console.log('Arduino status update:', data);
         setSerialConnected(data.connected || false);
       });
 
-      // Handle detection status
+      // Handle detection status updates
       socketRef.current.on('detection_status', (data: any) => {
-        console.log('Detection status:', data);
-        setDetectionRunning(data.running || false);
+        console.log('Detection status update:', data);
+        // You can add detection status state management here if needed
       });
 
-      socketRef.current.on('detection_started', (data: any) => {
-        console.log('Detection started:', data);
-        setDetectionRunning(true);
+      // Handle model selection results
+      socketRef.current.on('model_selection_result', (data: any) => {
+        console.log('Model selection result:', data);
+        // You can add model selection feedback here if needed
       });
 
-      socketRef.current.on('detection_stopped', (data: any) => {
-        console.log('Detection stopped:', data);
-        setDetectionRunning(false);
+      // Handle connection confirmation
+      socketRef.current.on('connection_confirmed', (data: any) => {
+        console.log('Connection confirmed:', data);
+        if (data.server_info) {
+          setSerialConnected(data.server_info.serial_connected || false);
+        }
       });
 
       // Handle ping/pong
@@ -223,21 +217,6 @@ export const WebSocketProvider = ({
       console.error('Error creating Socket.IO connection:', error);
       setConnectionStatus('error');
     }
-  };
-
-  const updateServerStatus = (data: any) => {
-    setServerStatus({
-      server_status: data.server_status || 'running',
-      connected_clients: data.connected_clients || 0,
-      serial_connected: data.serial_connected || false,
-      detection_running: data.detection_running || false,
-      current_model_id: data.current_model_id,
-      current_session_id: data.current_session_id,
-      detector_info: data.detector_info || {},
-      timestamp: data.timestamp || Date.now()
-    });
-    setSerialConnected(data.serial_connected || false);
-    setDetectionRunning(data.detection_running || false);
   };
 
   const scheduleReconnect = () => {
@@ -315,6 +294,24 @@ export const WebSocketProvider = ({
     }
   };
 
+  const reconnectSerial = () => {
+    if (socketRef.current?.connected) {
+      socketRef.current.emit('reconnect_serial', {
+        timestamp: Date.now()
+      });
+    }
+  };
+
+  const selectModel = (modelId: string, userId?: number) => {
+    if (socketRef.current?.connected) {
+      socketRef.current.emit('select_model', {
+        model_id: modelId,
+        user_id: userId,
+        timestamp: Date.now()
+      });
+    }
+  };
+
   const startDetection = () => {
     if (socketRef.current?.connected) {
       socketRef.current.emit('start_detection', {
@@ -367,7 +364,6 @@ export const WebSocketProvider = ({
     connectionStatus,
     serverStatus,
     serialConnected,
-    detectionRunning,
     mlStatus,
     reconnect,
     sendMessage,
@@ -375,6 +371,8 @@ export const WebSocketProvider = ({
     requestStatus,
     connectToArduino,
     disconnectFromArduino,
+    reconnectSerial,
+    selectModel,
     startDetection,
     stopDetection,
   };
