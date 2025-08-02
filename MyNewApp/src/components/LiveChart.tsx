@@ -1,9 +1,54 @@
 import React, { useMemo } from 'react';
 import { View, Text, Dimensions, StyleSheet, ScrollView } from 'react-native';
-import { LineChart as LineChartType } from 'react-native-chart-kit';
 import { AnomalyResult } from '../connection/WebsocketManager';
 
-const LineChart = LineChartType as any;
+// Simple fallback chart component if react-native-chart-kit is not available
+const SimpleChart: React.FC<{ data: any; width: number; height: number; chartConfig: any; style: any }> = ({ 
+  data, width, height, style 
+}) => {
+  const voltageData = data.datasets[0]?.data || [];
+  const maxVoltage = Math.max(...voltageData, 1);
+  const minVoltage = Math.min(...voltageData, 0);
+  const range = maxVoltage - minVoltage || 1;
+
+  return (
+    <View style={[{ width, height, backgroundColor: '#f8f9fa', borderRadius: 16, padding: 16 }, style]}>
+      <Text style={{ textAlign: 'center', marginBottom: 8, fontSize: 12, color: '#666' }}>
+        Simple Chart View (Install react-native-chart-kit for full features)
+      </Text>
+      <View style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-around' }}>
+        {voltageData.slice(-20).map((value: number, index: number) => {
+          const heightPercent = ((value - minVoltage) / range) * 80 + 10;
+          return (
+            <View
+              key={index}
+              style={{
+                width: 8,
+                height: `${heightPercent}%`,
+                backgroundColor: '#007AFF',
+                marginHorizontal: 1,
+                borderRadius: 2,
+              }}
+            />
+          );
+        })}
+      </View>
+      <Text style={{ textAlign: 'center', marginTop: 8, fontSize: 10, color: '#666' }}>
+        Range: {minVoltage.toFixed(3)}V - {maxVoltage.toFixed(3)}V
+      </Text>
+    </View>
+  );
+};
+
+// Try to import react-native-chart-kit, fallback to simple chart
+let LineChart: any;
+try {
+  const { LineChart: LineChartType } = require('react-native-chart-kit');
+  LineChart = LineChartType;
+} catch (error) {
+  console.log('react-native-chart-kit not available, using simple chart fallback');
+  LineChart = SimpleChart;
+}
 const screenWidth = Dimensions.get('window').width;
 
 type Props = {
@@ -112,7 +157,9 @@ const LiveChart: React.FC<Props> = ({ data }) => {
         <Text style={styles.title}>Real-Time Voltage Signal</Text>
         <View style={styles.noDataContainer}>
           <Text style={styles.noDataText}>No data available</Text>
-          <Text style={styles.noDataSubtext}>Waiting for sensor readings...</Text>
+          <Text style={styles.noDataSubtext}>
+            Waiting for sensor readings... {data ? `(${data.length} points)` : '(no data)'}
+          </Text>
         </View>
       </View>
     );
