@@ -248,7 +248,7 @@ export const WebSocketProvider = ({
         // Show final analysis if available
         if (data.final_analysis) {
           const analysis = data.final_analysis;
-          const title = analysis.is_anomalous ? '⚠️ Anomalous Material' : '✅ Normal Material';
+          const title = analysis.is_anomalous ? 'Anomalous Material' : 'Normal Material';
           const details = `${analysis.summary}\n\nDetails:\n• Total readings: ${analysis.total_predictions}\n• Anomalous readings: ${analysis.anomaly_count} (${analysis.anomaly_percentage}%)\n• Average confidence: ${(analysis.confidence * 100).toFixed(1)}%`;
 
           Alert.alert(title, details);
@@ -301,7 +301,7 @@ export const WebSocketProvider = ({
         // Show final analysis if available
         if (data.final_analysis) {
           const analysis = data.final_analysis;
-          const title = analysis.is_anomalous ? '⚠️ Anomalous Material' : '✅ Normal Material';
+          const title = analysis.is_anomalous ? 'Anomalous Material' : 'Normal Material';
           const details = `${analysis.summary}\n\nDetails:\n• Total readings: ${analysis.total_predictions}\n• Anomalous readings: ${analysis.anomaly_count} (${analysis.anomaly_percentage}%)\n• Average confidence: ${(analysis.confidence * 100).toFixed(1)}%`;
 
           Alert.alert(title, details);
@@ -311,7 +311,7 @@ export const WebSocketProvider = ({
       });
 
       socketRef.current.on('data_collection_status', (data: any) => {
-        console.log('📊 Data collection status:', data);
+        console.log('Data collection status:', data);
         setLastMessage(data);
 
         // Clear data when data collection is paused
