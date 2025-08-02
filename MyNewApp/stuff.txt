@@ -133,7 +133,8 @@ Full file tree Structure:
 │       ├── components/
 │       │   ├── ConnectPanel.tsx         # UI to choose connection (Bluetooth/WebSocket)
 │       │   ├── LiveChart.tsx            # Live vibration spectrum + anomaly chart
-│       │   ├── MaterialSelector.tsx     # NEW: Select material profile
+│       │   ├── MLStatusPanel.tsx        # 
+│       │   ├── ModelManager.tsx         #
 │       │   ├── CalibrationPanel.tsx     # NEW: Sensor calibration interface
 │       │   └── FrequencyAnalyzer.tsx    # NEW: Real-time frequency domain display
 │       ├── screens/
@@ -141,10 +142,13 @@ Full file tree Structure:
 │       │   ├── CalibrationScreen.tsx    # NEW: Material calibration workflow
 │       │   ├── TrainingScreen.tsx       # NEW: User training data collection interface
 │       │   ├── DataManagementScreen.tsx # NEW: Manage collected training datasets
+│       │   ├── LoginScreen.tsx # For login
+│       │   ├── RegisterScreen.tsx # For register
 │       │   └── HistoryScreen.tsx        # NEW: Anomaly history and reports
 │       ├── services/
 │       │   ├── BluetoothService.ts      # HC-05 Bluetooth manager (PRIMARY CONNECTION)
 │       │   ├── ApiService.ts            # POST vibration data to backend ML model
+│       │   ├── ApiService.ts            # For authentication with login/registration
 │       │   ├── MaterialProfileService.ts # NEW: Manage material-specific settings
 │       │   ├── TrainingDataService.ts   # NEW: Manage user training data collection
 │       │   └── DataUploadService.ts     # NEW: Upload user training data to backend

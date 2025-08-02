@@ -1,17 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
     TouchableOpacity,
     StyleSheet,
-    FlatList,
     Alert,
     ActivityIndicator,
     Modal,
     TextInput,
 } from 'react-native';
-import { useContext } from 'react';
-import { MaterialContext } from '../services/MaterialProfileService';
+import { useWebSocket } from '../connection/WebsocketManager';
 import TrainingDataService from '../services/TrainingDataService';
 
 interface ModelManagerProps {
@@ -19,25 +17,39 @@ interface ModelManagerProps {
 }
 
 const ModelManager: React.FC<ModelManagerProps> = ({ onModelSelect }) => {
-    const {
-        userModels,
-        presetModels,
-        selectedModel,
-        selectModel,
-        refreshModels,
-        isLoading,
-    } = useContext(MaterialContext);
-
+    const { wsGetModels, wsSelectModel, lastMessage } = useWebSocket();
+    const [models, setModels] = useState<any[]>([]);
+    const [selectedModel, setSelectedModel] = useState<any>(null);
+    const [isLoading, setIsLoading] = useState(false);
     const [showTrainingModal, setShowTrainingModal] = useState(false);
     const [modelName, setModelName] = useState('');
     const [materialType, setMaterialType] = useState('universal');
     const [isTraining, setIsTraining] = useState(false);
 
-    const allModels = [...presetModels, ...userModels];
+    // Load models on component mount
+    useEffect(() => {
+        setIsLoading(true);
+        wsGetModels();
+    }, []);
 
-    const handleModelSelect = async (model: any) => {
+    // Listen for model responses
+    useEffect(() => {
+        if (lastMessage) {
+            console.log('ModelManager received message:', lastMessage.type);
+            if (lastMessage.type === 'models_response' && lastMessage.models) {
+                console.log('Models received:', lastMessage.models);
+                setModels(lastMessage.models);
+                setIsLoading(false);
+            } else if (lastMessage.type === 'model_selected' && lastMessage.model) {
+                console.log('Model selected:', lastMessage.model);
+                setSelectedModel(lastMessage.model);
+            }
+        }
+    }, [lastMessage]);
+
+    const handleModelSelect = (model: any) => {
         try {
-            await selectModel(model);
+            wsSelectModel(model.id);
             if (onModelSelect) {
                 onModelSelect(model.id);
             }
@@ -80,7 +92,8 @@ const ModelManager: React.FC<ModelManagerProps> = ({ onModelSelect }) => {
                                 Alert.alert('Success', `Model "${modelName}" trained successfully with ${result.accuracy?.toFixed(2)}% accuracy`);
                                 setShowTrainingModal(false);
                                 setModelName('');
-                                refreshModels();
+                                // Refresh models list
+                                wsGetModels();
                             } catch (error) {
                                 Alert.alert('Error', 'Failed to train model. Please try again.');
                             } finally {
@@ -115,17 +128,15 @@ const ModelManager: React.FC<ModelManagerProps> = ({ onModelSelect }) => {
                     styles.modelDetails,
                     selectedModel?.id === item.id && styles.selectedText,
                 ]}>
-                    {item.material_type} • {item.is_preset ? 'Preset' : 'Custom'}
+                    {item.framework || 'TensorFlow'} • {item.is_preset ? 'Preset Model' : 'User Model'}
                     {item.accuracy && ` • ${item.accuracy.toFixed(1)}% accuracy`}
                 </Text>
-                {item.training_data_count > 0 && (
-                    <Text style={[
-                        styles.modelDetails,
-                        selectedModel?.id === item.id && styles.selectedText,
-                    ]}>
-                        Trained with {item.training_data_count} samples
-                    </Text>
-                )}
+                <Text style={[
+                    styles.modelDetails,
+                    selectedModel?.id === item.id && styles.selectedText,
+                ]}>
+                    Status: {item.is_active ? 'Active' : 'Available'}
+                </Text>
             </View>
             {selectedModel?.id === item.id && (
                 <Text style={styles.checkmark}>✓</Text>
@@ -147,14 +158,19 @@ const ModelManager: React.FC<ModelManagerProps> = ({ onModelSelect }) => {
 
             {isLoading ? (
                 <ActivityIndicator size="large" style={styles.loader} />
+            ) : models.length > 0 ? (
+                <View style={styles.modelList}>
+                    {models.map((item) => (
+                        <View key={item.id}>
+                            {renderModelItem({ item })}
+                        </View>
+                    ))}
+                </View>
             ) : (
-                <FlatList
-                    data={allModels}
-                    renderItem={renderModelItem}
-                    keyExtractor={(item) => item.id}
-                    style={styles.modelList}
-                    showsVerticalScrollIndicator={false}
-                />
+                <View style={styles.emptyState}>
+                    <Text style={styles.emptyText}>No ML models available</Text>
+                    <Text style={styles.emptySubtext}>Train a new model or check your connection</Text>
+                </View>
             )}
 
             <Modal
@@ -391,6 +407,21 @@ const styles = StyleSheet.create({
     trainButtonText: {
         color: '#fff',
         fontWeight: '600',
+    },
+    emptyState: {
+        padding: 40,
+        alignItems: 'center',
+    },
+    emptyText: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#666',
+        marginBottom: 8,
+    },
+    emptySubtext: {
+        fontSize: 14,
+        color: '#999',
+        textAlign: 'center',
     },
 });
 

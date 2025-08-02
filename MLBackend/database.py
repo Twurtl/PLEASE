@@ -1,139 +1,114 @@
-# database.py
-
-import os
-from datetime import datetime, timedelta
-from typing import Optional, List
-import json
-import hashlib
-import secrets
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, Text, ForeignKey, JSON
+# MLBackend/database.py
+from sqlalchemy import create_engine, Column, String, Text, Float, Boolean, DateTime, JSON, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session, relationship
-from passlib.context import CryptContext
+from sqlalchemy.dialects.mysql import CHAR
+import uuid
+from datetime import datetime, timedelta
+from typing import Optional, List
+import bcrypt
+import os
 import jwt
+import json
 
-# Database configuration
+# MySQL Database configuration
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_USER = os.getenv("DB_USER", "root")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "Xu98040059")
 DB_NAME = os.getenv("DB_NAME", "anomaly_detection")
 DB_PORT = os.getenv("DB_PORT", "3306")
 
-DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+# Simplified DATABASE_URL without auth_plugin
+DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
 
-# SQLAlchemy setup
-engine = create_engine(DATABASE_URL, echo=False)
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_recycle=300,
+    echo=False,  # Set to True for SQL debugging
+    connect_args={
+        "charset": "utf8mb4",
+        "autocommit": False,
+    }
+)
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# JWT Configuration
+SECRET_KEY = os.getenv(
+    "JWT_SECRET_KEY", "your-secret-key-change-this-in-production")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-# JWT configuration
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-here")
-JWT_ALGORITHM = "HS256"
-JWT_EXPIRATION_HOURS = 24
 
-# Database Models
+def generate_uuid():
+    return str(uuid.uuid4())
 
+# Database Models - Matching user's required schema with MySQL
 
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String(50), unique=True, index=True, nullable=False)
-    email = Column(String(100), unique=True, index=True, nullable=False)
-    hashed_password = Column(String(255), nullable=False)
-    is_active = Column(Boolean, default=True)
+    id = Column(CHAR(36), primary_key=True, default=generate_uuid)
+    username = Column(String(255), unique=True, nullable=False)
+    email = Column(String(255), unique=True, nullable=False)
+    password_hash = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow,
-                        onupdate=datetime.utcnow)
+    last_login = Column(DateTime, nullable=True)
 
     # Relationships
-    models = relationship("MLModel", back_populates="owner")
-    sessions = relationship("DetectionSession", back_populates="user")
+    models = relationship("Model", back_populates="user", cascade="all, delete-orphan")
+    logs = relationship("Log", back_populates="user", cascade="all, delete-orphan")
+    configurations = relationship("Configuration", back_populates="user", cascade="all, delete-orphan")
 
 
-class MLModel(Base):
-    __tablename__ = "ml_models"
+class Model(Base):
+    __tablename__ = "models"
 
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100), nullable=False)
-    # e.g., "steel", "aluminum", "composite"
-    material_type = Column(String(50), nullable=False)
-    file_path = Column(String(255), nullable=False)
-    accuracy = Column(Float, nullable=True)
-    description = Column(Text, nullable=True)
+    id = Column(CHAR(36), primary_key=True, default=generate_uuid)
+    user_id = Column(CHAR(36), ForeignKey('users.id', ondelete='CASCADE'), nullable=True)  # Nullable for preset models
+    name = Column(String(255), nullable=False)
+    file_path = Column(Text, nullable=False)
+    framework = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=False)
     is_preset = Column(Boolean, default=False)
-    user_id = Column(Integer, ForeignKey("users.id"),
-                     nullable=True)  # NULL for preset models
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow,
-                        onupdate=datetime.utcnow)
-
-    # Model parameters stored as JSON
-    parameters = Column(JSON, nullable=True)
 
     # Relationships
-    owner = relationship("User", back_populates="models")
-    sessions = relationship("DetectionSession", back_populates="model")
+    user = relationship("User", back_populates="models")
+    logs = relationship("Log", back_populates="model", cascade="all, delete-orphan")
+    configurations = relationship("Configuration", back_populates="model", cascade="all, delete-orphan")
 
 
-class DetectionSession(Base):
-    __tablename__ = "detection_sessions"
+class Log(Base):
+    __tablename__ = "logs"
 
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"),
-                     nullable=True)  # NULL for guest sessions
-    model_id = Column(Integer, ForeignKey("ml_models.id"), nullable=False)
-    session_name = Column(String(100), nullable=True)
-    start_time = Column(DateTime, default=datetime.utcnow)
-    end_time = Column(DateTime, nullable=True)
-    total_predictions = Column(Integer, default=0)
-    total_anomalies = Column(Integer, default=0)
-    average_confidence = Column(Float, nullable=True)
-    is_guest_session = Column(Boolean, default=False)
-
-    # Session metadata stored as JSON
-    metadata = Column(JSON, nullable=True)
-
-    # Relationships
-    user = relationship("User", back_populates="sessions")
-    model = relationship("MLModel", back_populates="sessions")
-    logs = relationship("DetectionLog", back_populates="session")
-
-
-class DetectionLog(Base):
-    __tablename__ = "detection_logs"
-
-    id = Column(Integer, primary_key=True, index=True)
-    session_id = Column(Integer, ForeignKey(
-        "detection_sessions.id"), nullable=False)
-    model_id = Column(Integer, ForeignKey("ml_models.id"), nullable=False)
-    user_id = Column(Integer, ForeignKey("users.id"),
-                     nullable=True)  # NULL for guest logs
+    id = Column(CHAR(36), primary_key=True, default=generate_uuid)
+    model_id = Column(CHAR(36), ForeignKey('models.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column(CHAR(36), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    input_snapshot = Column(JSON, nullable=False)
+    prediction_result = Column(JSON, nullable=False)
+    confidence_score = Column(Float, nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow)
 
-    # Input data
-    voltage_reading = Column(Float, nullable=False)
+    # Relationships
+    model = relationship("Model", back_populates="logs")
+    user = relationship("User", back_populates="logs")
 
-    # Features extracted from the data (stored as JSON)
-    features = Column(JSON, nullable=True)
 
-    # Prediction results
-    anomaly_score = Column(Float, nullable=False)
-    is_anomaly = Column(Boolean, nullable=False)
-    confidence = Column(Float, nullable=False)
-    # "ml_model" or "rule_based"
-    method = Column(String(50), default="ml_model")
+class Configuration(Base):
+    __tablename__ = "configurations"
 
-    # Additional prediction metadata
-    prediction_metadata = Column(JSON, nullable=True)
+    id = Column(CHAR(36), primary_key=True, default=generate_uuid)
+    user_id = Column(CHAR(36), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    model_id = Column(CHAR(36), ForeignKey('models.id', ondelete='CASCADE'), nullable=False)
+    settings_json = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
-    session = relationship("DetectionSession", back_populates="logs")
-
-# Database dependency
+    user = relationship("User", back_populates="configurations")
+    model = relationship("Model", back_populates="configurations")
 
 
 def get_db():
@@ -143,27 +118,28 @@ def get_db():
     finally:
         db.close()
 
-# Service Classes
-
 
 class AuthService:
     @staticmethod
-    def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    def hash_password(password: str) -> str:
+        return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+    @staticmethod
+    def verify_password(password: str, hashed: str) -> bool:
+        return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
+
+    @staticmethod
+    def create_access_token(data: dict):
         to_encode = data.copy()
-        if expires_delta:
-            expire = datetime.utcnow() + expires_delta
-        else:
-            expire = datetime.utcnow() + timedelta(hours=JWT_EXPIRATION_HOURS)
+        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         to_encode.update({"exp": expire})
-        encoded_jwt = jwt.encode(
-            to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+        encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
         return encoded_jwt
 
     @staticmethod
     def verify_token(token: str) -> Optional[str]:
         try:
-            payload = jwt.decode(token, JWT_SECRET_KEY,
-                                 algorithms=[JWT_ALGORITHM])
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
             user_id: str = payload.get("sub")
             if user_id is None:
                 return None
@@ -174,334 +150,160 @@ class AuthService:
 
 class UserService:
     @staticmethod
-    def get_password_hash(password: str) -> str:
-        return pwd_context.hash(password)
-
-    @staticmethod
-    def verify_password(plain_password: str, hashed_password: str) -> bool:
-        return pwd_context.verify(plain_password, hashed_password)
-
-    @staticmethod
     def create_user(db: Session, username: str, email: str, password: str) -> User:
-        hashed_password = UserService.get_password_hash(password)
-        db_user = User(
-            username=username,
-            email=email,
-            hashed_password=hashed_password
-        )
-        db.add(db_user)
+        hashed_password = AuthService.hash_password(password)
+        user = User(username=username, email=email, password_hash=hashed_password)
+        db.add(user)
         db.commit()
-        db.refresh(db_user)
-        return db_user
+        db.refresh(user)
+        return user
 
     @staticmethod
     def authenticate_user(db: Session, username: str, password: str) -> Optional[User]:
         user = db.query(User).filter(User.username == username).first()
-        if not user:
-            return None
-        if not UserService.verify_password(password, user.hashed_password):
-            return None
-        return user
+        if user and AuthService.verify_password(password, user.password_hash):
+            user.last_login = datetime.utcnow()
+            db.commit()
+            return user
+        return None
 
     @staticmethod
-    def get_user_by_id(db: Session, user_id: int) -> Optional[User]:
+    def get_user_by_id(db: Session, user_id: str) -> Optional[User]:
         return db.query(User).filter(User.id == user_id).first()
 
     @staticmethod
-    def get_user_models(db: Session, user_id: int) -> List[MLModel]:
-        return db.query(MLModel).filter(MLModel.user_id == user_id).all()
+    def get_user_by_username(db: Session, username: str) -> Optional[User]:
+        return db.query(User).filter(User.username == username).first()
 
     @staticmethod
-    def get_preset_models(db: Session) -> List[MLModel]:
-        return db.query(MLModel).filter(MLModel.is_preset == True).all()
+    def get_user_models(db: Session, user_id: str) -> List[Model]:
+        return db.query(Model).filter(Model.user_id == user_id, Model.is_active == True).all()
 
 
-class MLModelService:
+class ModelService:
     @staticmethod
-    def create_model(db: Session, name: str, material_type: str, file_path: str,
-                     user_id: Optional[int] = None, accuracy: Optional[float] = None,
-                     description: Optional[str] = None, is_preset: bool = False,
-                     parameters: Optional[dict] = None) -> MLModel:
-        db_model = MLModel(
+    def create_model(db: Session, user_id: str, name: str, file_path: str, framework: str = 'tensorflow') -> Model:
+        # Ensure user models are stored in the correct directory
+        if not file_path.startswith('models/users/'):
+            file_path = f"models/users/{user_id}/{file_path.split('/')[-1]}"
+        
+        model = Model(
+            user_id=user_id,
             name=name,
-            material_type=material_type,
             file_path=file_path,
-            user_id=user_id,
-            accuracy=accuracy,
-            description=description,
-            is_preset=is_preset,
-            parameters=parameters
+            framework=framework,
+            is_preset=False
         )
-        db.add(db_model)
+        db.add(model)
         db.commit()
-        db.refresh(db_model)
-        return db_model
+        db.refresh(model)
+        return model
+    
+    @staticmethod
+    def create_preset_model(db: Session, name: str, file_path: str, framework: str = 'tensorflow') -> Model:
+        model = Model(
+            user_id=None,  # Preset models don't belong to a specific user
+            name=name,
+            file_path=file_path,
+            framework=framework,
+            is_preset=True
+        )
+        db.add(model)
+        db.commit()
+        db.refresh(model)
+        return model
 
     @staticmethod
-    def get_model_by_id(db: Session, model_id: int) -> Optional[MLModel]:
-        return db.query(MLModel).filter(MLModel.id == model_id).first()
+    def get_model_by_id(db: Session, model_id: str) -> Optional[Model]:
+        return db.query(Model).filter(Model.id == model_id).first()
 
     @staticmethod
-    def get_models_by_user(db: Session, user_id: int) -> List[MLModel]:
-        return db.query(MLModel).filter(MLModel.user_id == user_id).all()
+    def get_user_models(db: Session, user_id: str) -> List[Model]:
+        # Get both user-specific models and preset models
+        user_models = db.query(Model).filter(Model.user_id == user_id).all()
+        preset_models = db.query(Model).filter(Model.is_preset == True).all()
+        return user_models + preset_models
+    
+    @staticmethod
+    def get_preset_models(db: Session) -> List[Model]:
+        return db.query(Model).filter(Model.is_preset == True).all()
 
     @staticmethod
-    def get_preset_models(db: Session) -> List[MLModel]:
-        return db.query(MLModel).filter(MLModel.is_preset == True).all()
-
-    @staticmethod
-    def update_model_accuracy(db: Session, model_id: int, accuracy: float) -> bool:
-        model = db.query(MLModel).filter(MLModel.id == model_id).first()
-        if model:
-            model.accuracy = accuracy
-            model.updated_at = datetime.utcnow()
-            db.commit()
-            return True
-        return False
-
-    @staticmethod
-    def delete_model(db: Session, model_id: int, user_id: int) -> bool:
-        model = db.query(MLModel).filter(
-            MLModel.id == model_id,
-            MLModel.user_id == user_id,
-            MLModel.is_preset == False
+    def set_active_model(db: Session, user_id: str, model_id: str):
+        # Deactivate all user models
+        db.query(Model).filter(Model.user_id == user_id).update({Model.is_active: False})
+        
+        # Try to find the model (could be user model or preset model)
+        model = db.query(Model).filter(
+            Model.id == model_id,
+            (Model.user_id == user_id) | (Model.is_preset == True)
         ).first()
+        
         if model:
-            # Delete associated file
-            if os.path.exists(model.file_path):
-                os.remove(model.file_path)
-            db.delete(model)
+            # For user models, set as active
+            if model.user_id == user_id:
+                model.is_active = True
+            # For preset models, create a user-specific active record
+            elif model.is_preset:
+                # Don't modify the preset model, just return it
+                # The active state for preset models is handled differently
+                pass
             db.commit()
-            return True
-        return False
-
-
-class SessionService:
-    @staticmethod
-    def create_session(db: Session, user_id: Optional[int], model_id: int,
-                       session_name: Optional[str] = None,
-                       is_guest_session: bool = False) -> DetectionSession:
-        if not session_name:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            session_name = f"Session_{timestamp}"
-
-        db_session = DetectionSession(
-            user_id=user_id,
-            model_id=model_id,
-            session_name=session_name,
-            is_guest_session=is_guest_session
-        )
-        db.add(db_session)
-        db.commit()
-        db.refresh(db_session)
-        return db_session
-
-    @staticmethod
-    def get_session_by_id(db: Session, session_id: int) -> Optional[DetectionSession]:
-        return db.query(DetectionSession).filter(DetectionSession.id == session_id).first()
-
-    @staticmethod
-    def get_user_sessions(db: Session, user_id: int, limit: int = 50) -> List[DetectionSession]:
-        return db.query(DetectionSession)\
-            .filter(DetectionSession.user_id == user_id)\
-            .order_by(DetectionSession.start_time.desc())\
-            .limit(limit).all()
-
-    @staticmethod
-    def end_session(db: Session, session_id: int) -> bool:
-        session = db.query(DetectionSession).filter(
-            DetectionSession.id == session_id).first()
-        if session and not session.end_time:
-            session.end_time = datetime.utcnow()
-
-            # Calculate session statistics
-            logs = db.query(DetectionLog).filter(
-                DetectionLog.session_id == session_id).all()
-            if logs:
-                session.total_predictions = len(logs)
-                session.total_anomalies = sum(
-                    1 for log in logs if log.is_anomaly)
-                session.average_confidence = sum(
-                    log.confidence for log in logs) / len(logs)
-
-            db.commit()
-            return True
-        return False
-
-    @staticmethod
-    def get_session_stats(db: Session, session_id: int) -> dict:
-        session = db.query(DetectionSession).filter(
-            DetectionSession.id == session_id).first()
-        if not session:
-            return {}
-
-        logs = db.query(DetectionLog).filter(
-            DetectionLog.session_id == session_id).all()
-
-        stats = {
-            'session_id': session.id,
-            'session_name': session.session_name,
-            'start_time': session.start_time.isoformat(),
-            'end_time': session.end_time.isoformat() if session.end_time else None,
-            'total_predictions': len(logs),
-            'total_anomalies': sum(1 for log in logs if log.is_anomaly),
-            'anomaly_rate': 0,
-            'average_confidence': 0,
-        }
-
-        if logs:
-            stats['anomaly_rate'] = stats['total_anomalies'] / \
-                stats['total_predictions']
-            stats['average_confidence'] = sum(
-                log.confidence for log in logs) / len(logs)
-
-        return stats
+            return model
+        return None
 
 
 class LogService:
     @staticmethod
-    def log_prediction(db: Session, session_id: int, model_id: int, user_id: Optional[int],
-                       voltage: float, features: dict, prediction: dict) -> DetectionLog:
-        db_log = DetectionLog(
-            session_id=session_id,
+    def log_prediction(db: Session, model_id: str, user_id: str, input_data: dict, prediction: dict, confidence_score: float = None):
+        log = Log(
             model_id=model_id,
             user_id=user_id,
-            voltage_reading=voltage,
-            features=features,
-            anomaly_score=prediction.get('anomaly_score', 0.0),
-            is_anomaly=prediction.get('is_anomaly', False),
-            confidence=prediction.get('confidence', 0.0),
-            method=prediction.get('method', 'ml_model'),
-            prediction_metadata=prediction.get('metadata', {})
+            input_snapshot=input_data,
+            prediction_result=prediction,
+            confidence_score=confidence_score
         )
-        db.add(db_log)
+        db.add(log)
         db.commit()
-        db.refresh(db_log)
-        return db_log
+        db.refresh(log)
+        return log
 
     @staticmethod
-    def get_session_logs(db: Session, session_id: int, limit: int = 1000) -> List[DetectionLog]:
-        return db.query(DetectionLog)\
-            .filter(DetectionLog.session_id == session_id)\
-            .order_by(DetectionLog.timestamp.desc())\
-            .limit(limit).all()
+    def get_user_logs(db: Session, user_id: str, limit: int = 100) -> List[Log]:
+        return db.query(Log).filter(Log.user_id == user_id).order_by(Log.timestamp.desc()).limit(limit).all()
+
+
+class ConfigurationService:
+    @staticmethod
+    def create_configuration(db: Session, user_id: str, model_id: str, settings: dict) -> Configuration:
+        config = Configuration(
+            user_id=user_id,
+            model_id=model_id,
+            settings_json=settings
+        )
+        db.add(config)
+        db.commit()
+        db.refresh(config)
+        return config
 
     @staticmethod
-    def get_recent_logs(db: Session, user_id: Optional[int] = None,
-                        limit: int = 100) -> List[DetectionLog]:
-        query = db.query(DetectionLog)
-        if user_id:
-            query = query.filter(DetectionLog.user_id == user_id)
-        return query.order_by(DetectionLog.timestamp.desc()).limit(limit).all()
-
-    @staticmethod
-    def get_anomaly_logs(db: Session, session_id: Optional[int] = None,
-                         user_id: Optional[int] = None, limit: int = 100) -> List[DetectionLog]:
-        query = db.query(DetectionLog).filter(DetectionLog.is_anomaly == True)
-        if session_id:
-            query = query.filter(DetectionLog.session_id == session_id)
-        if user_id:
-            query = query.filter(DetectionLog.user_id == user_id)
-        return query.order_by(DetectionLog.timestamp.desc()).limit(limit).all()
-
-# Database initialization
+    def get_user_configurations(db: Session, user_id: str) -> List[Configuration]:
+        return db.query(Configuration).filter(Configuration.user_id == user_id).order_by(Configuration.created_at.desc()).all()
 
 
 def init_database():
-    """Initialize database with preset models"""
-    Base.metadata.create_all(bind=engine)
-
-    db = SessionLocal()
+    """Initialize database tables"""
     try:
-        # Check if preset models already exist
-        existing_presets = db.query(MLModel).filter(
-            MLModel.is_preset == True).count()
-        if existing_presets > 0:
-            print(f"✅ Found {existing_presets} existing preset models")
-            return
-
-        # Create models directory structure
-        os.makedirs("models/preset", exist_ok=True)
-        os.makedirs("models/user", exist_ok=True)
-
-        # Create preset models (you'll need to have actual model files)
-        preset_models = [
-            {
-                "name": "Steel Fatigue Detector v1.0",
-                "material_type": "steel",
-                "file_path": "models/preset/steel_fatigue_v1.pkl",
-                "accuracy": 0.95,
-                "description": "Pre-trained model for detecting fatigue in steel structures",
-                "parameters": {
-                    "window_size": 50,
-                    "features": ["rms", "peak", "kurtosis", "skewness"],
-                    "threshold": 0.7
-                }
-            },
-            {
-                "name": "Aluminum Crack Detection v2.1",
-                "material_type": "aluminum",
-                "file_path": "models/preset/aluminum_crack_v2.pkl",
-                "accuracy": 0.92,
-                "description": "Advanced model for detecting cracks in aluminum components",
-                "parameters": {
-                    "window_size": 75,
-                    "features": ["fft", "wavelet", "statistical"],
-                    "threshold": 0.6
-                }
-            },
-            {
-                "name": "Composite Delamination Detector",
-                "material_type": "composite",
-                "file_path": "models/preset/composite_delamination.pkl",
-                "accuracy": 0.88,
-                "description": "Specialized model for detecting delamination in composite materials",
-                "parameters": {
-                    "window_size": 100,
-                    "features": ["energy", "entropy", "correlation"],
-                    "threshold": 0.65
-                }
-            },
-            {
-                "name": "General Purpose Anomaly Detector",
-                "material_type": "general",
-                "file_path": "models/preset/general_anomaly.pkl",
-                "accuracy": 0.85,
-                "description": "General-purpose model suitable for various materials and defects",
-                "parameters": {
-                    "window_size": 60,
-                    "features": ["statistical", "frequency"],
-                    "threshold": 0.5
-                }
-            }
-        ]
-
-        for model_data in preset_models:
-            preset_model = MLModel(
-                name=model_data["name"],
-                material_type=model_data["material_type"],
-                file_path=model_data["file_path"],
-                accuracy=model_data["accuracy"],
-                description=model_data["description"],
-                is_preset=True,
-                user_id=None,
-                parameters=model_data["parameters"]
-            )
-            db.add(preset_model)
-
-        db.commit()
-        print(f"✅ Created {len(preset_models)} preset models")
-
+        Base.metadata.create_all(bind=engine)
+        print("✅ Database tables created successfully")
+        print("✅ Database initialized with new schema")
+            
     except Exception as e:
-        print(f"❌ Error initializing preset models: {e}")
-        db.rollback()
-    finally:
-        db.close()
-
-
-# Export all models and services
-__all__ = [
-    'Base', 'engine', 'SessionLocal', 'get_db', 'init_database',
-    'User', 'MLModel', 'DetectionSession', 'DetectionLog',
-    'UserService', 'MLModelService', 'SessionService', 'LogService', 'AuthService'
-]
+        print(f"❌ Error initializing database: {e}")
+        print("\nTroubleshooting tips:")
+        print("1. Make sure MySQL server is running")
+        print("2. Check your database credentials in .env file")
+        print("3. Ensure the 'anomaly_detection' database exists")
+        print("4. Try running: CREATE DATABASE anomaly_detection;")
+        print("5. Install missing dependencies: pip install -r requirements.txt")
+        raise e
