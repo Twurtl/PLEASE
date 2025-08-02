@@ -454,7 +454,7 @@ const HomeScreen = () => {
       </View>
 
       {/* ML Status Panel */}
-      <MLStatusPanel mlStatus={mlStatus} isConnected={isConnected} />
+      <MLStatusPanel mlStatus={mlStatus || undefined} isConnected={isConnected} />
 
       {/* Model Selection */}
       <ModelManager onModelSelect={handleModelSelect} />

@@ -9,7 +9,7 @@ export interface MLStatus {
   window_size: number;
   current_window: number;
   status: 'warming_up' | 'ml_ready' | 'error' | 'unknown';
-  method: 'ml_model' | 'rule_based' | 'unknown';
+  method: 'ml_model' | 'rule_based' | 'data_processing' | 'unknown';
 }
 
 export interface AnomalyResult {

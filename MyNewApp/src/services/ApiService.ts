@@ -48,6 +48,10 @@ class ApiService {
     });
     return response.json();
   }
+
+  static async sendFeatures(vector: any, metadata: any) {
+    return this.post('/features', { vector, metadata });
+  }
 }
 
 export default ApiService;
