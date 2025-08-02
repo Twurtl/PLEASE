@@ -6,7 +6,9 @@ import CalibrationScreen from './src/screens/CalibrationScreen';
 import TrainingScreen from './src/screens/TrainingScreen';
 import DataManagementScreen from './src/screens/DataManagementScreen';
 import HistoryScreen from './src/screens/HistoryScreen';
+import LoginScreen from './src/screens/LoginScreen';
 import { WebSocketProvider } from './src/connection/WebsocketManager';
+import { AuthProvider } from './src/services/AuthService'; // Add this import
 
 const MainApp = () => {
   const [currentScreen, setCurrentScreen] = useState<'Home' | 'Calibration' | 'Training' | 'Manage Data' | 'History'>('Home');
@@ -65,13 +67,24 @@ const MainApp = () => {
 };
 
 const App = () => {
-  // Updated server URL - no /ws path needed
-  const serverUrl = 'ws://localhost:8000/ws';
+  const [modelSelected, setModelSelected] = useState(false);
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  const [selectedModelName, setSelectedModelName] = useState<string | null>(null);
+
+  const handleLoginSuccess = (modelId: string, modelName: string) => {
+    setSelectedModelId(modelId);
+    setSelectedModelName(modelName);
+    setModelSelected(true);
+  };
+
+  const serverUrl = 'http://localhost:8000'; // Socket.IO server URL
 
   return (
-    <WebSocketProvider serverUrl={serverUrl}>
-      <MainApp />
-    </WebSocketProvider>
+    <AuthProvider>
+      <WebSocketProvider serverUrl={serverUrl}>
+        {modelSelected ? <MainApp /> : <LoginScreen onSuccess={handleLoginSuccess} />}
+      </WebSocketProvider>
+    </AuthProvider>
   );
 };
 

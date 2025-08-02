@@ -1,103 +1,201 @@
-# Anomaly Detection WebSocket Backend
+# Anomaly Detection Backend
 
-Real-time anomaly detection backend using Flask-SocketIO for Arduino voltage monitoring.
+A Flask-based backend for anomaly detection with user authentication, ML model management, and real-time data processing from Arduino sensors.
 
-## Setup
+## Features
 
-1. **Install Dependencies:**
+- **User Authentication**: JWT-based authentication with user registration and login
+- **ML Model Management**: Train, store, and manage custom ML models per user
+- **Real-time Detection**: Process Arduino sensor data in real-time
+- **Database Integration**: MySQL database with user data, models, and detection logs
+- **Social Features**: User posts and following system
+- **WebSocket Support**: Real-time communication with React Native app
 
-   ```bash
-   pip install -r requirements.txt
-   ```
+## Database Schema
 
-2. **Connect Arduino:**
+The system uses MySQL with the following tables:
 
-   - Upload `Arduino/voltage_monitor.ino` to your Arduino
-   - Connect voltage source to A0 pin
-   - Connect Arduino to computer via USB
+### Core Tables
+- **users**: User accounts with authentication
+- **posts**: User-generated content
+- **follows**: User following relationships
+- **ml_models**: Machine learning models (preset and user-trained)
+- **detection_sessions**: Active detection sessions
+- **detection_logs**: Detection results and predictions
 
-3. **Start the Server:**
+## Setup Instructions
 
-   ```bash
-   source mlbackend-env/bin/activate
+### Prerequisites
 
-   python app.py
-   run server:
-   uvicorn app:app --host 0.0.0.0 --port 8000 --reload
+1. **MySQL Server**: Install and configure MySQL Workbench or MySQL Server
+2. **Python 3.8+**: Ensure Python is installed
+3. **Arduino IDE**: For uploading code to Arduino
 
+### 1. Database Setup
 
-   ```
+#### Create MySQL Database
 
-## How It Works
-
-### Data Flow:
-
+1. Open MySQL Workbench or MySQL command line
+2. Create a new database:
+```sql
+CREATE DATABASE anomaly_detection;
 ```
-Arduino (USB) → Python Backend → WebSocket → React Native App
+
+#### Configure Environment Variables
+
+Create a `.env` file in the `MLBackend` directory:
+
+```env
+DB_HOST=localhost
+DB_USER=root
+DB_PASSWORD=your_mysql_password
+DB_NAME=anomaly_detection
+DB_PORT=3306
+JWT_SECRET_KEY=your-secret-key-change-this-in-production
 ```
 
-1. **Arduino** reads voltage from A0 pin every 100ms
-2. **Python Backend** receives data via USB serial
-3. **ML Model** processes voltage data and detects anomalies
-4. **WebSocket** sends results to React Native app
+### 2. Python Environment Setup
 
-### Features:
+1. Navigate to the MLBackend directory:
+```bash
+cd MLBackend
+```
 
-- Real-time voltage monitoring
-- Rule-based anomaly detection (no ML model required)
-- WebSocket communication with mobile app
-- Configurable thresholds and parameters
-- Automatic Arduino detection
+2. Create and activate virtual environment:
+```bash
+python -m venv mlbackend-env
+source mlbackend-env/bin/activate  # On Windows: mlbackend-env\Scripts\activate
+```
 
-## Configuration
+3. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
 
-Edit `config/model_config.json` to adjust:
+### 3. Initialize Database
 
-- `anomaly_threshold`: Detection sensitivity (0-1)
-- `window_size`: Number of samples for analysis
-- `sample_rate`: Expected samples per second
+Run the database initialization script:
+```bash
+python init_db.py
+```
+
+This will:
+- Create all required tables
+- Set up preset ML models
+- Verify database connection
+
+### 4. Arduino Setup
+
+1. Upload the `voltage_monitor.ino` file to your Arduino
+2. Connect Arduino to your computer via USB
+3. Note the serial port (e.g., `/dev/tty.usbserial-1320` on macOS/Linux)
+
+### 5. Start the Backend
+
+```bash
+python app.py
+```
+
+The server will start on `http://localhost:8000`
 
 ## API Endpoints
 
-### WebSocket Events:
+### Authentication
+- `POST /auth/register` - User registration
+- `POST /auth/login` - User login
+- `GET /auth/me` - Get current user info
 
-- `connect`: App connects to server
-- `voltage_data`: App sends voltage data
-- `anomaly_result`: Server sends anomaly results
+### ML Models
+- `GET /models/user` - Get user's models (including presets)
+- `POST /models/train` - Train a new model
+- `POST /models/{id}/select` - Select a model for detection
 
-### Response Format:
+### Detection
+- `POST /detection/start` - Start anomaly detection
+- `POST /detection/stop` - Stop detection
+- `GET /detection/status` - Get detection status
 
-```json
-{
-  "anomaly_score": 0.23,
-  "is_anomaly": false,
-  "confidence": 0.87,
-  "timestamp": 1234567890,
-  "voltage": 2.45
-}
+### Social Features
+- `GET /posts` - Get all posts
+- `POST /posts` - Create a new post
+
+## React Native Integration
+
+The backend is designed to work with the React Native app. Key integration points:
+
+### Authentication Flow
+1. User registers/logs in via React Native app
+2. JWT token is stored in AsyncStorage
+3. All subsequent requests include the token in Authorization header
+
+### ML Model Management
+1. Users can view preset models and their custom models
+2. Users can train new models using Arduino data
+3. Models are stored with file paths for backend loading
+
+### Real-time Detection
+1. User selects a model in the app
+2. Detection starts via API call
+3. Real-time data is streamed via WebSocket
+4. Results are displayed in the app
+
+## File Structure
+
 ```
-
-## Testing
-
-1. **Without Arduino:**
-
-   - Server will start without Arduino
-   - Use app to send test voltage data
-
-2. **With Arduino:**
-   - Connect Arduino with voltage source
-   - Server automatically detects and reads data
-   - Real-time anomaly detection
+MLBackend/
+├── app.py                 # Main Flask application
+├── database.py            # Database models and services
+├── ml_model.py            # ML model training and prediction
+├── data_processor.py      # Data processing utilities
+├── init_db.py             # Database initialization script
+├── requirements.txt       # Python dependencies
+├── config/                # Configuration files
+│   └── model_config.json
+├── models/                # Trained model files
+│   ├── preset/           # Preset models
+│   └── user/             # User-trained models
+└── README.md             # This file
+```
 
 ## Troubleshooting
 
-- **Arduino not found**: Check USB connection and port
-- **WebSocket connection failed**: Verify server is running on port 5000
-- **No anomaly detection**: Adjust thresholds in config file
+### Database Connection Issues
+- Verify MySQL server is running
+- Check database credentials in `.env` file
+- Ensure database `anomaly_detection` exists
 
-## Next Steps
+### Arduino Connection Issues
+- Check serial port in `app.py` (SERIAL_PORT variable)
+- Verify Arduino is connected and code is uploaded
+- Test serial communication with Arduino IDE
 
-1. **Train LSTM Model**: Replace rule-based detection with ML model
-2. **Add User Training**: Implement user-specific model training
-3. **Material Profiles**: Add material-specific detection parameters
-4. **Advanced Features**: Add frequency analysis, FFT, etc.
+### Model Training Issues
+- Ensure sufficient training data is collected
+- Check file permissions for model storage
+- Verify TensorFlow installation
+
+## Security Considerations
+
+- Change default JWT secret key in production
+- Use HTTPS in production
+- Implement rate limiting
+- Add input validation for all endpoints
+- Use environment variables for sensitive data
+
+## Development
+
+### Adding New Features
+1. Update database models in `database.py`
+2. Add new endpoints in `app.py`
+3. Update React Native services accordingly
+4. Test with the mobile app
+
+### Testing
+- Use Postman or curl for API testing
+- Test WebSocket connections
+- Verify database operations
+- Test model training pipeline
+
+## License
+
+This project is part of the SEMW4 Anomaly Detection System.

@@ -1,14 +1,27 @@
 current backend:
 MLBackend/
-├── app.py                    # Flask + WebSocket server
-├── websocket_handler.py      # WebSocket connection management
-├── ml_model.py              # LSTM model inference
-├── data_processor.py        # Signal processing
+├── app.py                    # Updated Flask + SocketIO server
+├── database.py              # New: Database models and services
+├── websocket_handler.py      # Keep existing if still needed
+├── ml_model.py              # Keep existing LSTM model inference
+├── data_processor.py        # Keep existing signal processing
 ├── models/
-│   └── lstm_anomaly.h5      # Your trained model
+│   └── lstm_anomaly.h5      # existing trained model
 ├── config/
-│   └── model_config.json    # Model parameters
-└── requirements.txt
+│   └── model_config.json    # Your existing model parameters
+├── requirements.txt         # Updated with new dependencies
+├── .env                     # New: Environment variables
+└── init_db.py              # Database initialisation script
+
+Arduino Data Flow:
+┌─────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│ Arduino │───▶│ Backend     │───▶│ Rolling     │───▶│ Frontend    │
+│ (Real)  │    │ Processing  │    │ Window      │    │ Display     │
+└─────────┘    └─────────────┘    └─────────────┘    └─────────────┘
+                      │                    │                    │
+                      ▼                    ▼                    ▼
+                Extract Features    Maintain 50 samples   Show Progress Bar
+                (voltage, time)     (sliding window)      (0% → 100%)
 
 Arduino (USB) → Python WebSocket Server → ML Model → React Native App
 
@@ -142,7 +155,9 @@ Full file tree Structure:
 │       │   ├── TrainingDataCollector.ts # NEW: Collect and validate user training data
 │       │   └── DataValidator.ts         # NEW: Validate quality of user-provided data
 │       └── connection/
-│           └── BluetoothManager.ts      # FOCUSED: Dedicated Bluetooth connection logic
+│           └── BluetoothManager.ts      # Bluetooth connection logic
+│           └── WebsocketManager.tsx      # Websocket connection logic
+
 
 ├── MLBackend/                           # Flask-based ML backend
 │   ├── app.py                          # ENHANCED: Main Flask server with user training endpoints

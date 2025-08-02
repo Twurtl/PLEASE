@@ -4,4 +4,11 @@ tensorflow==2.18.0
 scipy==1.11.1
 pyserial==3.5
 python-socketio==5.8.0
-eventlet==0.33.3 
+eventlet==0.33.3
+pymysql==1.1.0
+sqlalchemy==2.0.23
+bcrypt==4.1.2
+pyjwt==2.8.0
+flask-cors==4.0.0
+cryptography==41.0.7
+requests==2.31.0 

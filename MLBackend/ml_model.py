@@ -24,6 +24,10 @@ class AnomalyDetector:
         self.threshold = self.config.get('anomaly_threshold', 0.5)
         self.confidence_threshold = self.config.get(
             'confidence_threshold', 0.7)
+        
+        # Rolling window for LSTM prediction
+        self.feature_window = []
+        self.window_size = self.config.get('window_size', 50)
 
         # Load model if available
         if model_path and os.path.exists(model_path):
@@ -34,6 +38,7 @@ class AnomalyDetector:
     def predict(self, features: Dict[str, Any]) -> Dict[str, Any]:
         """
         Predict anomaly from processed features
+        Returns detailed status for frontend real-time updates
         """
         if self.model:
             return self._predict_with_model(features)
@@ -69,23 +74,57 @@ class AnomalyDetector:
 
     def _predict_with_model(self, features: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            feature_vector = np.array([[
-                features[f] for f in self.config['feature_names']
-            ]])
-            feature_vector = np.reshape(
-                feature_vector, (1, self.config['window_size'], -1))
-            prediction = self.model.predict(feature_vector)[0][0]
-            is_anomaly = prediction > self.threshold
+            # Add features to rolling window
+            feature_vector = [features[f] for f in self.config['feature_names']]
+            self.feature_window.append(feature_vector)
+            
+            # Keep only the last window_size features
+            if len(self.feature_window) > self.window_size:
+                self.feature_window = self.feature_window[-self.window_size:]
+            
+            # Calculate window status for frontend
+            window_progress = min(len(self.feature_window) / self.window_size, 1.0)
+            
+            # Only predict if we have enough data
+            if len(self.feature_window) == self.window_size:
+                # Reshape to (1, window_size, features) for LSTM
+                feature_array = np.array(self.feature_window)
+                feature_array = np.reshape(feature_array, (1, self.window_size, -1))
+                
+                prediction = self.model.predict(feature_array, verbose=0)[0][0]
+                is_anomaly = prediction > self.threshold
 
-            return {
-                'score': float(prediction),
-                'is_anomaly': bool(is_anomaly),
-                'confidence': float(prediction),
-                'method': 'ml_model'
-            }
+                return {
+                    'score': float(prediction),
+                    'is_anomaly': bool(is_anomaly),
+                    'confidence': float(prediction),
+                    'method': 'ml_model',
+                    'window_progress': window_progress,
+                    'window_size': self.window_size,
+                    'current_window': len(self.feature_window),
+                    'status': 'ml_ready'
+                }
+            else:
+                # Not enough data yet, use rule-based but show progress
+                rule_prediction = self._predict_with_rules(features)
+                rule_prediction.update({
+                    'window_progress': window_progress,
+                    'window_size': self.window_size,
+                    'current_window': len(self.feature_window),
+                    'status': 'warming_up'
+                })
+                return rule_prediction
+                
         except Exception as e:
             print(f"Model prediction failed: {e}")
-            return self._predict_with_rules(features)
+            rule_prediction = self._predict_with_rules(features)
+            rule_prediction.update({
+                'window_progress': 0.0,
+                'window_size': self.window_size,
+                'current_window': len(self.feature_window),
+                'status': 'error'
+            })
+            return rule_prediction
 
     def train_model(self, X_train, y_train, model_save_path="backend/models/lstm_model.h5"):
         """

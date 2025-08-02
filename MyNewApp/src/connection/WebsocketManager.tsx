@@ -1,8 +1,17 @@
 // WebsocketManager.tsx
 import React, { createContext, useContext, useEffect, useState, useRef, ReactNode } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
+import io, { Socket } from 'socket.io-client';
 
 // Types for our WebSocket data
+export interface MLStatus {
+  window_progress: number;
+  window_size: number;
+  current_window: number;
+  status: 'warming_up' | 'ml_ready' | 'error' | 'unknown';
+  method: 'ml_model' | 'rule_based' | 'unknown';
+}
+
 export interface AnomalyResult {
   anomaly_score: number;
   is_anomaly: boolean;
@@ -11,12 +20,16 @@ export interface AnomalyResult {
   voltage: number;
   method?: string;
   features?: any;
+  ml_status?: MLStatus;
 }
 
 export interface ServerStatus {
   server_status: string;
   connected_clients: number;
   serial_connected: boolean;
+  detection_running: boolean;
+  current_model_id?: string;
+  current_session_id?: string;
   detector_info: any;
   timestamp: number;
 }
@@ -25,14 +38,20 @@ export interface WebSocketContextType {
   isConnected: boolean;
   latestData: AnomalyResult | null;
   latestRaw: string | null;
+  lastMessage: any | null;
   connectionStatus: 'connecting' | 'connected' | 'disconnected' | 'error';
   serverStatus: ServerStatus | null;
   serialConnected: boolean;
+  detectionRunning: boolean;
+  mlStatus: MLStatus | null;
   reconnect: () => void;
   sendMessage: (message: any) => void;
   updateThreshold: (threshold: number) => void;
   requestStatus: () => void;
-  reconnectSerial: () => void;
+  connectToArduino: () => void;
+  disconnectFromArduino: () => void;
+  startDetection: () => void;
+  stopDetection: () => void;
 }
 
 // Create the WebSocket context with proper type
@@ -43,10 +62,9 @@ interface WebSocketProviderProps {
   serverUrl?: string;
 }
 
-export const WebSocketProvider = ({ 
-  children, 
-  serverUrl = 'ws://localhost:8000/ws',
-
+export const WebSocketProvider = ({
+  children,
+  serverUrl = 'http://localhost:8000',
 }: WebSocketProviderProps): JSX.Element => {
   const [isConnected, setIsConnected] = useState(false);
   const [latestData, setLatestData] = useState<AnomalyResult | null>(null);
@@ -54,183 +72,172 @@ export const WebSocketProvider = ({
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected' | 'error'>('disconnected');
   const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null);
   const [serialConnected, setSerialConnected] = useState(false);
-  
-  const wsRef = useRef<WebSocket | null>(null);
+  const [detectionRunning, setDetectionRunning] = useState(false);
+  const [mlStatus, setMlStatus] = useState<MLStatus | null>(null);
+  const [lastMessage, setLastMessage] = useState<any | null>(null);
+
+  const socketRef = useRef<Socket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const maxReconnectAttempts = 5;
   const reconnectDelay = 3000; // 3 seconds
-  const pingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const statusIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const connect = () => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
+    if (socketRef.current?.connected) {
       return; // Already connected
     }
 
     try {
       setConnectionStatus('connecting');
-      console.log('Connecting to WebSocket:', serverUrl);
-      
-      // Create new WebSocket connection
-      wsRef.current = new WebSocket(serverUrl);
+      console.log('Connecting to Socket.IO server:', serverUrl);
 
-      wsRef.current.onopen = () => {
-        console.log('WebSocket connected successfully');
+      // Create Socket.IO connection
+      socketRef.current = io(serverUrl, {
+        transports: ['websocket', 'polling'], // Allow both transports
+        timeout: 20000,
+        forceNew: true,
+        reconnection: false, // We'll handle reconnection manually
+      });
+
+      socketRef.current.on('connect', () => {
+        console.log('Socket.IO connected successfully');
         setIsConnected(true);
         setConnectionStatus('connected');
         reconnectAttemptsRef.current = 0; // Reset reconnect attempts
-        
-        // Start ping interval to keep connection alive
-        startPingInterval();
-        
-        // Start periodic status requests
-        startStatusInterval();
-        
+
         // Request initial status
         requestStatus();
-      };
+      });
 
-      wsRef.current.onmessage = (event) => {
-        try {
-          setLatestRaw(event.data);
-          const data = JSON.parse(event.data);
-          console.log('Received WebSocket message:', data);
-          
-          // Handle different message types from the pure WebSocket server
-          const messageType = data.type;
-          
-          switch (messageType) {
-            case 'anomaly_data':
-              // This is anomaly result data
-              console.log('Processing anomaly data:', data);
-              setLatestData({
-                anomaly_score: data.anomaly_score,
-                is_anomaly: data.is_anomaly,
-                confidence: data.confidence,
-                timestamp: data.timestamp,
-                voltage: data.voltage,
-                method: data.method,
-                features: data.features
-              } as AnomalyResult);
-              break;
-              
-            case 'connection_confirmed':
-              // Initial connection message with server info
-              console.log('Connection confirmed:', data.message);
-              if (data.server_info) {
-                setSerialConnected(true); // Assume serial is connected on startup
-              }
-              break;
-              
-            case 'status_response':
-              // Server status response
-              console.log('Server status:', data);
-              setServerStatus({
-                server_status: data.server_status,
-                connected_clients: data.connected_clients,
-                serial_connected: data.serial_connected,
-                detector_info: data.detector_info,
-                timestamp: data.timestamp
-              });
-              setSerialConnected(data.serial_connected);
-              break;
-              
-            case 'threshold_updated':
-              console.log('Threshold updated:', data.threshold);
-              break;
-              
-            case 'serial_error':
-              console.error('Serial error:', data.message);
-              setSerialConnected(false);
-              break;
-              
-            case 'serial_reconnect_attempt':
-              console.log('Serial reconnection attempted');
-              // Request status after a delay to check if reconnection succeeded
-              setTimeout(() => requestStatus(), 2000);
-              break;
-              
-            case 'ping':
-              // Respond to server ping
-              sendMessage({ type: 'pong', timestamp: Date.now() });
-              break;
-              
-            case 'pong':
-              // Handle server pong response
-              console.log('Received pong from server');
-              break;
-              
-            default:
-              console.log('Unknown message type:', messageType, data);
-              break;
-          }
-          
-        } catch (error) {
-          console.error('Error parsing WebSocket message:', error);
-          console.error('Raw message:', event.data);
-        }
-      };
-
-      wsRef.current.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        setConnectionStatus('error');
-      };
-
-      wsRef.current.onclose = (event) => {
-        console.log(`WebSocket closed: code=${event.code}, reason='${event.reason}'`);
+      socketRef.current.on('disconnect', (reason) => {
+        console.log('Socket.IO disconnected:', reason);
         setIsConnected(false);
         setConnectionStatus('disconnected');
         setServerStatus(null);
         setSerialConnected(false);
-        stopPingInterval();
-        stopStatusInterval();
-        
-        // Attempt to reconnect if it wasn't a manual close
-        if (event.code !== 1000 && reconnectAttemptsRef.current < maxReconnectAttempts) {
+        setDetectionRunning(false);
+
+        // Attempt to reconnect if it wasn't a manual disconnect
+        if (reason !== 'io client disconnect' && reconnectAttemptsRef.current < maxReconnectAttempts) {
           scheduleReconnect();
         } else if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
           console.log('Max reconnection attempts reached');
           setConnectionStatus('error');
         }
-      };
+      });
+
+      // Handle connection confirmation
+      socketRef.current.on('connection_confirmed', (data: any) => {
+        console.log('Connection confirmed:', data);
+        if (data.server_info) {
+          setSerialConnected(data.server_info.serial_connected || false);
+          setDetectionRunning(data.server_info.detection_running || false);
+        }
+      });
+
+      // Handle anomaly data from Arduino
+      socketRef.current.on('arduino_data', (data: any) => {
+        console.log('Received arduino data:', data);
+        setLatestRaw(JSON.stringify(data));
+        setLastMessage(data);
+
+        if (data.prediction) {
+          setLatestData({
+            anomaly_score: data.prediction.anomaly_score || 0,
+            is_anomaly: data.prediction.is_anomaly || false,
+            confidence: data.prediction.confidence || 0,
+            timestamp: data.timestamp || Date.now(),
+            voltage: data.voltage || 0,
+            method: data.prediction.method,
+            features: data.prediction.features,
+            ml_status: data.ml_status
+          });
+
+          // Update ML status separately for easy access
+          if (data.ml_status) {
+            setMlStatus(data.ml_status);
+          }
+        }
+      });
+
+      // Handle raw Arduino data
+      socketRef.current.on('arduino_raw_data', (data: any) => {
+        console.log('Received raw arduino data:', data);
+        setLatestRaw(JSON.stringify(data));
+      });
+
+      // Handle server status updates
+      socketRef.current.on('status_update', (data: any) => {
+        console.log('Server status update:', data);
+        updateServerStatus(data);
+      });
+
+      socketRef.current.on('status_response', (data: any) => {
+        console.log('Status response:', data);
+        updateServerStatus(data);
+      });
+
+      // Handle Arduino connection status
+      socketRef.current.on('arduino_status', (data: any) => {
+        console.log('Arduino status:', data);
+        setSerialConnected(data.connected || false);
+      });
+
+      // Handle detection status
+      socketRef.current.on('detection_status', (data: any) => {
+        console.log('Detection status:', data);
+        setDetectionRunning(data.running || false);
+      });
+
+      socketRef.current.on('detection_started', (data: any) => {
+        console.log('Detection started:', data);
+        setDetectionRunning(true);
+      });
+
+      socketRef.current.on('detection_stopped', (data: any) => {
+        console.log('Detection stopped:', data);
+        setDetectionRunning(false);
+      });
+
+      // Handle ping/pong
+      socketRef.current.on('pong', (data: any) => {
+        console.log('Received pong from server:', data);
+      });
+
+      socketRef.current.on('connect_error', (error: any) => {
+        console.error('Socket.IO connection error:', error);
+        setConnectionStatus('error');
+
+        // Schedule reconnect on connection error
+        if (reconnectAttemptsRef.current < maxReconnectAttempts) {
+          scheduleReconnect();
+        }
+      });
+
+      socketRef.current.on('error', (error: any) => {
+        console.error('Socket.IO error:', error);
+        setConnectionStatus('error');
+      });
 
     } catch (error) {
-      console.error('Error creating WebSocket:', error);
+      console.error('Error creating Socket.IO connection:', error);
       setConnectionStatus('error');
     }
   };
 
-  const startPingInterval = () => {
-    stopPingInterval(); // Clear any existing interval
-    pingIntervalRef.current = setInterval(() => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        sendMessage({ type: 'ping', timestamp: Date.now() });
-      }
-    }, 30000); // Ping every 30 seconds
-  };
-
-  const stopPingInterval = () => {
-    if (pingIntervalRef.current) {
-      clearInterval(pingIntervalRef.current);
-      pingIntervalRef.current = null;
-    }
-  };
-
-  const startStatusInterval = () => {
-    stopStatusInterval(); // Clear any existing interval
-    statusIntervalRef.current = setInterval(() => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        requestStatus();
-      }
-    }, 60000); // Request status every 60 seconds
-  };
-
-  const stopStatusInterval = () => {
-    if (statusIntervalRef.current) {
-      clearInterval(statusIntervalRef.current);
-      statusIntervalRef.current = null;
-    }
+  const updateServerStatus = (data: any) => {
+    setServerStatus({
+      server_status: data.server_status || 'running',
+      connected_clients: data.connected_clients || 0,
+      serial_connected: data.serial_connected || false,
+      detection_running: data.detection_running || false,
+      current_model_id: data.current_model_id,
+      current_session_id: data.current_session_id,
+      detector_info: data.detector_info || {},
+      timestamp: data.timestamp || Date.now()
+    });
+    setSerialConnected(data.serial_connected || false);
+    setDetectionRunning(data.detection_running || false);
   };
 
   const scheduleReconnect = () => {
@@ -240,7 +247,7 @@ export const WebSocketProvider = ({
 
     reconnectAttemptsRef.current += 1;
     console.log(`Scheduling reconnect attempt ${reconnectAttemptsRef.current}/${maxReconnectAttempts} in ${reconnectDelay}ms`);
-    
+
     reconnectTimeoutRef.current = setTimeout(() => {
       connect();
     }, reconnectDelay);
@@ -252,12 +259,9 @@ export const WebSocketProvider = ({
       reconnectTimeoutRef.current = null;
     }
 
-    stopPingInterval();
-    stopStatusInterval();
-
-    if (wsRef.current) {
-      wsRef.current.close(1000, 'Manual disconnect');
-      wsRef.current = null;
+    if (socketRef.current) {
+      socketRef.current.disconnect();
+      socketRef.current = null;
     }
   };
 
@@ -268,36 +272,63 @@ export const WebSocketProvider = ({
   };
 
   const sendMessage = (message: any) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
+    if (socketRef.current?.connected) {
       try {
-        wsRef.current.send(JSON.stringify(message));
+        socketRef.current.emit('message', message);
       } catch (error) {
-        console.error('Error sending WebSocket message:', error);
+        console.error('Error sending Socket.IO message:', error);
       }
     } else {
-      console.warn('WebSocket is not connected. Cannot send message:', message);
+      console.warn('Socket.IO is not connected. Cannot send message:', message);
     }
   };
 
   const updateThreshold = (threshold: number) => {
-    sendMessage({
-      type: 'update_threshold',
-      threshold: Math.max(0, Math.min(1, threshold)) // Clamp between 0 and 1
-    });
+    if (socketRef.current?.connected) {
+      socketRef.current.emit('update_threshold', {
+        threshold: Math.max(0, Math.min(1, threshold)) // Clamp between 0 and 1
+      });
+    }
   };
 
   const requestStatus = () => {
-    sendMessage({
-      type: 'get_status',
-      timestamp: Date.now()
-    });
+    if (socketRef.current?.connected) {
+      socketRef.current.emit('get_status', {
+        timestamp: Date.now()
+      });
+    }
   };
 
-  const reconnectSerial = () => {
-    sendMessage({
-      type: 'reconnect_serial',
-      timestamp: Date.now()
-    });
+  const connectToArduino = () => {
+    if (socketRef.current?.connected) {
+      socketRef.current.emit('arduino_connect', {
+        timestamp: Date.now()
+      });
+    }
+  };
+
+  const disconnectFromArduino = () => {
+    if (socketRef.current?.connected) {
+      socketRef.current.emit('arduino_disconnect', {
+        timestamp: Date.now()
+      });
+    }
+  };
+
+  const startDetection = () => {
+    if (socketRef.current?.connected) {
+      socketRef.current.emit('start_detection', {
+        timestamp: Date.now()
+      });
+    }
+  };
+
+  const stopDetection = () => {
+    if (socketRef.current?.connected) {
+      socketRef.current.emit('stop_detection', {
+        timestamp: Date.now()
+      });
+    }
   };
 
   // Handle app state changes (background/foreground)
@@ -332,14 +363,20 @@ export const WebSocketProvider = ({
     isConnected,
     latestData,
     latestRaw,
+    lastMessage,
     connectionStatus,
     serverStatus,
     serialConnected,
+    detectionRunning,
+    mlStatus,
     reconnect,
     sendMessage,
     updateThreshold,
     requestStatus,
-    reconnectSerial,
+    connectToArduino,
+    disconnectFromArduino,
+    startDetection,
+    stopDetection,
   };
 
   return (

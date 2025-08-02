@@ -1,28 +1,53 @@
-import axios from 'axios';
-import { FeatureVector } from '../utils/SignalProcessor';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const BACKEND_URL = 'http://<YOUR_SERVER_IP>:5000/analyze'; // Replace with actual IP or domain
+const API_BASE_URL = 'http://localhost:8000'; // Update with your server URL
 
 class ApiService {
-  async sendFeatures(
-    features: FeatureVector,
-    metadata: {
-      timestamp: number;
-      material: string;
-      calibrationParams: any;
-    }
-  ): Promise<any> {
-    try {
-      const response = await axios.post(BACKEND_URL, {
-        features,
-        metadata,
-      });
-      return response.data;
-    } catch (error) {
-      console.error('API Error:', error);
-      return null;
-    }
+  private static async getAuthHeaders() {
+    const token = await AsyncStorage.getItem('@auth_token');
+    return {
+      'Content-Type': 'application/json',
+      ...(token && { Authorization: `Bearer ${token}` }),
+    };
+  }
+
+  static async get(endpoint: string) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: 'GET',
+      headers,
+    });
+    return response.json();
+  }
+
+  static async post(endpoint: string, data: any) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(data),
+    });
+    return response.json();
+  }
+
+  static async put(endpoint: string, data: any) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(data),
+    });
+    return response.json();
+  }
+
+  static async delete(endpoint: string) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: 'DELETE',
+      headers,
+    });
+    return response.json();
   }
 }
 
-export default new ApiService();
+export default ApiService;
